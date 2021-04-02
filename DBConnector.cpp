@@ -7,7 +7,7 @@
 DBConnector::DBConnector() {
     char *zErrMsg = nullptr;
     int rc;
-    char *sql;
+    string sql;
 
     /* Open database */
     rc = sqlite3_open("/tmp/test.db", &db);
@@ -19,25 +19,23 @@ DBConnector::DBConnector() {
         fprintf(stdout, "Opened database successfully\n");
     }
 
-    // Drop table
-//    sql = "DROP TABLE GRAIN;";
-//    rc = sqlite3_exec(db, sql, nullptr, nullptr, &zErrMsg);
-
     // Create new table
-    sql = "CREATE TABLE IF NOT EXISTS GRAIN("  \
+    sql = "CREATE TABLE IF NOT EXISTS GRAIN("
       "ID INT PRIMARY KEY," \
-      "NAME           TEXT    NOT NULL," \
-      "PATH           TEXT    NOT NULL," \
-      "IDX            INT     NOT NULL," \
-      "LOUDNESS       REAL    NOT NULL," \
-      "SPECTRAL_CENTROID         REAL NOT NULL);";
-    rc = sqlite3_exec(db, sql, nullptr, nullptr, &zErrMsg);
+      "NAME           TEXT    NOT NULL,"
+      "PATH           TEXT    NOT NULL,"
+      "IDX            INT     NOT NULL,"
+      "LOUDNESS       REAL    NOT NULL,"
+      "SPECTRAL_CENTROID         REAL NOT NULL,"
+      "SPECTRAL_FLUX REAL NOT NULL"
+      ");";
+    rc = sqlite3_exec(db, sql.c_str(), nullptr, nullptr, &zErrMsg);
 
     if( rc != SQLITE_OK ){
         fprintf(stderr, "SQL error: %s\n", zErrMsg);
         sqlite3_free(zErrMsg);
     } else {
-        fprintf(stdout, "Table created successfully\n");
+//        fprintf(stdout, "Table created successfully\n");
     }
 }
 
@@ -68,7 +66,7 @@ void DBConnector::insertGrain(Grain &grain) {
 void DBConnector::insertGrains(vector<unique_ptr<Grain>>& grains) {
     std::string sql;
 
-    sql = "INSERT INTO GRAIN (NAME, PATH, IDX, LOUDNESS, SPECTRAL_CENTROID) VALUES ";
+    sql = "INSERT INTO GRAIN (NAME, PATH, IDX, LOUDNESS, SPECTRAL_CENTROID, SPECTRAL_FLUX) VALUES ";
 
     for(unsigned long i = 0; i < grains.size(); i++){
         Grain& grain = *grains.at(i);
@@ -76,7 +74,9 @@ void DBConnector::insertGrains(vector<unique_ptr<Grain>>& grains) {
                 + grain.getName() +  "', '"
                 + grain.getPath() + "', " + to_string(grain.getIdx()) + ", "
                 + to_string(grain.getLoudness()) + ", "
-                + to_string(grain.getSpectralCentroid()) + ")";
+                + to_string(grain.getSpectralCentroid()) + ", "
+                + to_string(grain.getSpectralFlux())
+                + ")";
         if(i < grains.size() - 1){
             sql += ",";
         }
@@ -103,67 +103,31 @@ DBConnector::~DBConnector() {
     sqlite3_close(db);
 }
 
-static int minMaxCallback(void *data, int argc, char **argv, char **azColName){
-    float* minMax = static_cast<float*>(data);
-    try{
-        float test = (float)strtod(argv[0],NULL);
-        *minMax = test;
-    } catch (int e) {
-        fprintf(stderr, "Exception: No min/max found in database");
-        return 1;
-    }
-    return 0;
-}
-
-float DBConnector::queryMax(string field) {
-    std::string sql;
-
-    sql = "SELECT MAX(" + field + ") FROM GRAIN;";
-    char *zErrMsg = nullptr;
-
-    float max;
-    /* Execute SQL statement */
-    int rc = sqlite3_exec(db, sql.c_str(), minMaxCallback, &max, &zErrMsg);
-
-    return max;
-}
-
-float DBConnector::queryMin(string field) {
-    std::string sql;
-
-    sql = "SELECT MIN(" + field + ") FROM GRAIN;";
-    char *zErrMsg = nullptr;
-
-    float min;
-    /* Execute SQL statement */
-    int rc = sqlite3_exec(db, sql.c_str(), minMaxCallback, &min, &zErrMsg);
-
-    return min;
-}
-
 static int closestGrainCallback(void *data, int argc, char **argv, char **azColName){
     fprintf(stdout, "%s: ", (const char*)data);
 
-    int i;
-//    for(i = 0; i<argc; i++){
-//        printf("%s = %s\n", azColName[i], argv[i] ? argv[i] : "NULL");
-//    }
-
-    Grain* grain = static_cast<Grain*>(data);
+//    auto* grain = static_cast<Grain*>(data);
+    vector<Grain>* grains = static_cast<vector<Grain>*>(data);
 
     try{
         // Parse grain
+        Grain grain;
+
         string name(argv[1]);
         string path(argv[2]);
-        int idx = (int)strtod(argv[3],NULL);
-        float loudness = (float)strtod(argv[4],NULL);
-        float sc = (float)strtod(argv[5],NULL);
+        int idx = (int)strtod(argv[3], nullptr);
+        float loudness = (float)strtod(argv[4], nullptr);
+        float sc = (float)strtod(argv[5], nullptr);
+        float spectralFlux = (float)strtod(argv[6], nullptr);
 
-        grain->setIdx(idx);
-        grain->setPath(path);
-        grain->setLoudness(loudness);
-        grain->setSpectralCentroid(sc);
-    } catch (int e) {
+        grain.setIdx(idx);
+        grain.setPath(path);
+        grain.setLoudness(loudness);
+        grain.setSpectralCentroid(sc);
+        grain.setSpectralFlux(spectralFlux);
+
+        grains->emplace_back(grain);
+    } catch (...) {
         fprintf(stderr, "Exception while parsing grain from database.");
         return 1;
     }
@@ -171,7 +135,7 @@ static int closestGrainCallback(void *data, int argc, char **argv, char **azColN
 }
 
 
-Grain DBConnector::queryClosestGrain(Grain &grain, float margin) {
+vector<Grain> DBConnector::queryClosestGrain(Grain &grain, float margin) {
     // Get grain values
     string marginStr = to_string(margin);
     string loudness = to_string(grain.getLoudness());
@@ -181,17 +145,20 @@ Grain DBConnector::queryClosestGrain(Grain &grain, float margin) {
 
     string sql;
     sql = "SELECT * FROM GRAIN WHERE"
-          " LOUDNESS BETWEEN " + to_string(grain.getLoudness() - margin) + " AND " + to_string(grain.getLoudness() + margin) +
+          " LOUDNESS BETWEEN " + to_string(grain.getLoudness() - 10) + " AND " + to_string(grain.getLoudness() + 10) +
           " AND " +
           " SPECTRAL_CENTROID BETWEEN " + to_string(grain.getSpectralCentroid() - scMargin) + " AND " + to_string(grain.getSpectralCentroid() + scMargin) +
+          " AND " +
+          " SPECTRAL_FLUX BETWEEN " + to_string(grain.getSpectralFlux() - 5.0f) + " AND " + to_string(
+            grain.getSpectralFlux() + 5.0f) +
           " ORDER BY ABS(LOUDNESS - " + to_string(grain.getLoudness()) + ")" +
-          " LIMIT 1"
+          " LIMIT 10"
           ";";
 
     char *zErrMsg = nullptr;
     int rc;
 
-    Grain found;
+    vector<Grain> found;
 
     /* Execute SQL statement */
     rc = sqlite3_exec(db, sql.c_str(), closestGrainCallback, &found, &zErrMsg);
@@ -202,4 +169,97 @@ Grain DBConnector::queryClosestGrain(Grain &grain, float margin) {
     }
 
     return found;
+}
+
+static int isPopulatedCallback(void *data, int argc, char **argv, char **azColName){
+    bool* populated = static_cast<bool*>(data);
+    int count = (int)strtod(argv[0], nullptr);
+    if(count > 0){
+        *populated = true;
+        return 0;
+    }
+    return 1;
+}
+
+bool DBConnector::isPopulated() {
+    string sql = "SELECT count(*) FROM (select 0 from GRAIN limit 1);";
+
+    char *zErrMsg = nullptr;
+    int rc;
+
+    bool populated = false;
+    /* Execute SQL statement */
+    rc = sqlite3_exec(db, sql.c_str(), isPopulatedCallback, &populated, &zErrMsg);
+
+    if( rc != SQLITE_OK ){
+        fprintf(stderr, "SQL error: %s\n", zErrMsg);
+        sqlite3_free(zErrMsg);
+    }
+
+    return populated;
+}
+
+static int minMaxMeanStdCallback(void *data, int argc, char **argv, char **azColName){
+    float* minMax = static_cast<float*>(data);
+    try{
+        float test = (float)strtod(argv[0],NULL);
+        *minMax = test;
+    } catch (int e) {
+        fprintf(stderr, "Exception: No min/max/mean/std found in database");
+        return 1;
+    }
+    return 0;
+}
+
+float DBConnector::queryMax(const string& field) {
+    std::string sql;
+
+    sql = "SELECT MAX(" + field + ") FROM GRAIN;";
+    char *zErrMsg = nullptr;
+
+    float max;
+    /* Execute SQL statement */
+    int rc = sqlite3_exec(db, sql.c_str(), minMaxMeanStdCallback, &max, &zErrMsg);
+
+    return max;
+}
+
+float DBConnector::queryMin(const string& field) {
+    std::string sql;
+
+    sql = "SELECT MIN(" + field + ") FROM GRAIN;";
+    char *zErrMsg = nullptr;
+
+    float min;
+    /* Execute SQL statement */
+    int rc = sqlite3_exec(db, sql.c_str(), minMaxMeanStdCallback, &min, &zErrMsg);
+
+    return min;
+}
+
+float DBConnector::queryMean(const string& field) {
+    std::string sql;
+
+    sql = "SELECT AVG(" + field + ") FROM GRAIN;";
+    char *zErrMsg = nullptr;
+
+    float mean;
+    /* Execute SQL statement */
+    int rc = sqlite3_exec(db, sql.c_str(), minMaxMeanStdCallback, &mean, &zErrMsg);
+
+    return mean;
+}
+
+float DBConnector::queryStd(const string& field) {
+    std::string sql;
+
+    sql = "SELECT AVG(" + field + "*" + field + ") - AVG(" + field + ") * AVG(" + field + ") FROM GRAIN;";
+    char *zErrMsg = nullptr;
+
+    float var;
+    /* Execute SQL statement */
+    int rc = sqlite3_exec(db, sql.c_str(), minMaxMeanStdCallback, &var, &zErrMsg);
+    float std = sqrtf(var);
+
+    return std;
 }

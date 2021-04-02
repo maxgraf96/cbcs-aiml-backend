@@ -5,6 +5,7 @@
 #ifndef DMLAP_BACKEND_TRAVERSER_H
 #define DMLAP_BACKEND_TRAVERSER_H
 
+#include <cstdio>
 #include <vector>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_audio_utils/juce_audio_utils.h>
@@ -12,21 +13,46 @@
 #include "DBConnector.h"
 #include "Grain.h"
 #include "Constants.h"
+#include "Utility.h"
+#include "Analyser.h"
 
 using namespace std;
 using namespace juce;
 
 class Traverser {
 public:
-    Traverser(DBConnector& connector);
+    Traverser(DBConnector& connector, Analyser& analyser);
 
     AudioBuffer<float> initialiseRandomTrajectory(int lengthInGrains);
+    AudioBuffer<float> generateTrajectoryFromParams(vector<float> params);
+    AudioBuffer<float> generateTrajectoryFromAudio(AudioBuffer<float>& buffer);
+    void calculateFeatureStatistics();
+    bool isMinMaxInitialised() const;
+
 
 private:
     DBConnector& dbConnector;
+    Analyser& analyser;
     vector<Grain> source;
     vector<Grain> target;
     AudioFormatManager formatManager;
+
+    Grain findBestGrain(Grain& src, vector<Grain>& grains);
+
+    float minLoudness = 0.0f;
+    float maxLoudness = 0.0f;
+    float meanLoudness = 0.0f;
+    float stdLoudness = 0.0f;
+
+    float minSC = 0.0f;
+    float maxSC = 0.0f;
+    float meanSC = 0.0f;
+    float stdSC = 0.0f;
+
+    float minSF = 0.0f;
+    float maxSF = 0.0f;
+    float meanSF = 0.0f;
+    float stdSF = 0.0f;
 };
 
 

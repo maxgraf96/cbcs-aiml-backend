@@ -4,8 +4,9 @@
 
 #ifndef DMLAP_BACKEND_DBCONNECTOR_H
 #define DMLAP_BACKEND_DBCONNECTOR_H
-#include <stdio.h>
+#include <cstdio>
 #include <vector>
+#include <set>
 #include "sqlite3.h"
 #include "Grain.h"
 
@@ -17,9 +18,13 @@ public:
 
     void insertGrain(Grain& grain);
     void insertGrains(vector<unique_ptr<Grain>>& grain);
-    Grain queryClosestGrain(Grain& grain, float margin);
-    float queryMax(string field);
-    float queryMin(string field);
+    vector<Grain> queryClosestGrain(Grain& grain, float margin);
+    float queryMax(const string& field);
+    float queryMin(const string& field);
+    float queryMean(const string& field);
+    float queryStd(const string& field);
+
+    bool isPopulated();
 
 private:
     // SQLite Database

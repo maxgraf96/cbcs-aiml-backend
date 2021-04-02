@@ -13,7 +13,7 @@
 Identifier SamplePanel::currentFilePathID("currentFilePath");
 
 //==============================================================================
-SamplePanel::SamplePanel(Analyser& analyser) : analyser(analyser)
+SamplePanel::SamplePanel(Analyser& analyser, Traverser& traverser) : analyser(analyser), traverser(traverser)
 {
     // Initialise loaded state
     fileLoadedState = notLoaded;
@@ -24,7 +24,7 @@ SamplePanel::SamplePanel(Analyser& analyser) : analyser(analyser)
     );
 
     // Set default location
-    File* defaultLocation = new File("/Users/max/Music/Ableton/Mixes");
+    File* defaultLocation = new File("/Users/max/Music/Ableton/Mixes/dmlap");
     filenameComponent->setDefaultBrowseTarget(*defaultLocation);
 
     // Add file picker component to UI
@@ -44,6 +44,10 @@ SamplePanel::SamplePanel(Analyser& analyser) : analyser(analyser)
     formatManager.registerBasicFormats();
 
     sampleBuffer = make_unique<AudioBuffer<float>>();
+
+    if(traverser.isMinMaxInitialised()){
+        fileLoadedState = dbLoaded;
+    }
 
     // Set component size
     setSize(1024, 200);
@@ -73,6 +77,8 @@ void SamplePanel::paint (Graphics& g)
     }
     else if (fileLoadedState == rejected) {
         fileLoadedText = "Only '.wav' files are supported!";
+    } else if(fileLoadedState == dbLoaded){
+        fileLoadedText = "Database loaded.";
     }
     else {
         fileLoadedText = "Loaded";
@@ -118,6 +124,10 @@ void SamplePanel::loadFile(const File& file) {
 
         // Set file loaded state
         fileLoadedState = loaded;
+
+        // Calculate feature statistics
+        traverser.calculateFeatureStatistics();
+
     }
     else if (fileExtension == ".wav" || fileExtension == ".WAV") {
         // Load single file
@@ -125,6 +135,9 @@ void SamplePanel::loadFile(const File& file) {
 
         // Set file loaded state
         fileLoadedState = loaded;
+
+        // Calculate feature statistics
+        traverser.calculateFeatureStatistics();
     }
     else {
         // Reset file component

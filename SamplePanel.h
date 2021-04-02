@@ -9,8 +9,12 @@
 */
 
 #pragma once
+#ifndef DMLAP_BACKEND_SAMPLE_PANEL_H
+#define DMLAP_BACKEND_SAMPLE_PANEL_H
+
 #include <juce_audio_utils/juce_audio_utils.h>
 #include "Analyser.h"
+#include "Traverser.h"
 
 using namespace juce;
 //==============================================================================
@@ -19,7 +23,7 @@ using namespace juce;
 class SamplePanel : public Component, FilenameComponentListener, private Value::Listener
 {
 public:
-    SamplePanel(Analyser&);
+    SamplePanel(Analyser&, Traverser&);
     ~SamplePanel() override;
 
     void paint (Graphics&) override;
@@ -34,8 +38,10 @@ public:
     Value currentFilePath;
 private:
     Analyser& analyser;
+    Traverser& traverser;
+
     // State for file loaded
-    enum FileLoadedState { notLoaded, loading, loaded, rejected };
+    enum FileLoadedState { notLoaded, loading, loaded, rejected, dbLoaded };
     FileLoadedState fileLoadedState;
 
     AudioFormatManager formatManager;
@@ -67,3 +73,5 @@ private:
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SamplePanel)
 };
+
+#endif

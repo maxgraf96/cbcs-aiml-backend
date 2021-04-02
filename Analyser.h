@@ -23,12 +23,13 @@ public:
     ~Analyser();
     void initialise(double sr, int samplesPerBlockExpected);
 
-    void analyseFileBuffer(AudioBuffer<float>& buffer, string filename, string path);
+    // This one stores in database -> used when initially reading grains from files into corpus
+    void analyseFileBuffer(AudioBuffer<float>& buffer, const string& filename, const string& path);
+    // This one just creates grains in memory -> used when recording audio to prime the agent
+    vector<Grain> audioBufferToGrains(AudioBuffer<float>& buffer);
 
 private:
     DBConnector& dbConnector;
-
-    void insertGrain();
 
     double sampleRate = 0.0;
     int samplesPerBlock = -1;
@@ -43,22 +44,17 @@ private:
     vector<Real> windowedFrame;
     // Will contain the spectrum data
     vector<Real> eSpectrumData;
-    vector<Real> eMelBands;
     Real eSpectralCentroid = 0.0f;
-    Real ePitchYIN = 0.0f;
-    Real ePitchConfidence = 0.0f;
     Real eLoudness = 0.0f;
-    Real eOnsetDetection = 0.0f;
-    vector<Real> eSpectralPeaksFrequencies; // in Hz
-    vector<Real> eSpectralPeaksMagnitudes;
+    Real eSpectralFlux = 0.0f;
 
     // Essentia algorithms are marked by an "a" prefix
     unique_ptr<Algorithm> aWindowing;
     unique_ptr<Algorithm> aSpectrum;
     unique_ptr<Algorithm> aSpectralCentroid;
     unique_ptr<Algorithm> aLoudness;
-    unique_ptr<Algorithm> aSpectralPeaks;
     unique_ptr<Algorithm> aMFCC;
+    unique_ptr<Algorithm> aSpectralFlux;
 };
 
 

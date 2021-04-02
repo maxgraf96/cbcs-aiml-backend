@@ -115,6 +115,7 @@ target_link_libraries(GuiAppExample
         juce::juce_recommended_warning_flags
         juce::juce_audio_utils
         juce::juce_dsp
+        juce::juce_osc
 
         # Statically linked essentia and rocksdb
         essentia -L${ESSENTIA_PATH}

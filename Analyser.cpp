@@ -9,7 +9,7 @@ Analyser::Analyser(DBConnector& connector)
 
 }
 
-void Analyser::analyseFileBuffer(AudioBuffer<float>& buffer, string filename, string path){
+void Analyser::analyseFileBuffer(AudioBuffer<float>& buffer, const string& filename, const string& path){
     int index = 0;
     int counter = 1;
     vector<unique_ptr<Grain>> grains;
@@ -27,16 +27,17 @@ void Analyser::analyseFileBuffer(AudioBuffer<float>& buffer, string filename, st
         aSpectrum->compute();
         aSpectralCentroid->compute();
         aLoudness->compute();
-//        aSpectralPeaks->compute();
+        aSpectralFlux->compute();
 
         // Save grain to database
-//        if(index == 0)
-        currentGrain = make_unique<Grain>(filename + to_string(counter), path, index, eLoudness, eSpectralCentroid);
-//        else
-//            currentGrain = make_unique<Grain>(filename + to_string(counter), "", index, eLoudness, eSpectralCentroid);
-
-        grains.push_back(make_unique<Grain>(filename + to_string(counter), path, index, eLoudness, eSpectralCentroid));
-//        insertGrain();
+//        currentGrain = make_unique<Grain>(filename + to_string(counter), path, index, eLoudness, eSpectralCentroid);
+        grains.push_back(make_unique<Grain>(filename + to_string(counter),
+                                            path,
+                                            index,
+                                            eLoudness,
+                                            eSpectralCentroid,
+                                            eSpectralFlux
+                ));
 
         // Update index -> start of next grain
         index += GRAIN_LENGTH;
@@ -45,8 +46,35 @@ void Analyser::analyseFileBuffer(AudioBuffer<float>& buffer, string filename, st
     dbConnector.insertGrains(grains);
 }
 
-void Analyser::insertGrain(){
-    dbConnector.insertGrain(*currentGrain);
+vector<Grain> Analyser::audioBufferToGrains(AudioBuffer<float>& buffer){
+    int index = 0;
+    int counter = 1;
+    vector<Grain> grains;
+    while(index + GRAIN_LENGTH < buffer.getNumSamples()){
+        // Clear essentia audiobuffer
+        eAudioBuffer.clear();
+
+        auto* reader = buffer.getReadPointer(0);
+        for (int i = index; i < index + GRAIN_LENGTH; i++){
+            eAudioBuffer.push_back(reader[i]);
+        }
+
+        // Essentia algorithms compute routines
+        aWindowing->compute();
+        aSpectrum->compute();
+        aSpectralCentroid->compute();
+        aLoudness->compute();
+        aSpectralFlux->compute();
+
+        Grain* grain = new Grain(eLoudness, eSpectralCentroid, eSpectralFlux);
+        grains.emplace_back(*grain);
+
+        // Update index -> start of next grain
+        index += GRAIN_LENGTH;
+        counter++;
+    }
+
+    return grains;
 }
 
 void Analyser::initialise(double sr, int samplesPerBlockExpected) {
@@ -61,7 +89,7 @@ void Analyser::initialise(double sr, int samplesPerBlockExpected) {
     aMFCC.reset(factory.create("MFCC"));
     aSpectralCentroid.reset(factory.create("SpectralCentroidTime", "sampleRate", sr));
     aLoudness.reset(factory.create("Loudness"));
-    aSpectralPeaks.reset(factory.create("SpectralPeaks", "sampleRate", sr));
+    aSpectralFlux.reset(factory.create("Flux"));
 
     // Connect algorithms
     aWindowing->input("frame").set(eAudioBuffer);
@@ -77,11 +105,9 @@ void Analyser::initialise(double sr, int samplesPerBlockExpected) {
     aLoudness->input("signal").set(eAudioBuffer);
     aLoudness->output("loudness").set(eLoudness);
 
-    // Spectral peaks
-    aSpectralPeaks->input("spectrum").set(eSpectrumData);
-    aSpectralPeaks->output("frequencies").set(eSpectralPeaksFrequencies);
-    aSpectralPeaks->output("magnitudes").set(eSpectralPeaksMagnitudes);
+    // Spectral flux
+    aSpectralFlux->input("spectrum").set(eSpectrumData);
+    aSpectralFlux->output("flux").set(eSpectralFlux);
 }
 
-Analyser::~Analyser() {
-}
+Analyser::~Analyser() = default;
