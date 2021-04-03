@@ -24,7 +24,7 @@ public:
     void initialise(double sr, int samplesPerBlockExpected);
 
     // This one stores in database -> used when initially reading grains from files into corpus
-    void analyseFileBuffer(AudioBuffer<float>& buffer, const string& filename, const string& path);
+    void analyseAndSaveToDB(AudioBuffer<float>& buffer, const string& filename, const string& path);
     // This one just creates grains in memory -> used when recording audio to prime the agent
     vector<Grain> audioBufferToGrains(AudioBuffer<float>& buffer);
 
@@ -47,6 +47,9 @@ private:
     Real eSpectralCentroid = 0.0f;
     Real eLoudness = 0.0f;
     Real eSpectralFlux = 0.0f;
+    Real ePitch = 0.0f;
+    Real ePitchConfidence = 0.0f;
+    Real eRMS = 0.0f;
 
     // Essentia algorithms are marked by an "a" prefix
     unique_ptr<Algorithm> aWindowing;
@@ -55,6 +58,10 @@ private:
     unique_ptr<Algorithm> aLoudness;
     unique_ptr<Algorithm> aMFCC;
     unique_ptr<Algorithm> aSpectralFlux;
+    unique_ptr<Algorithm> aPitchYINFFT;
+    unique_ptr<Algorithm> aRMS;
+
+    bool computeFeatures();
 };
 
 

@@ -39,6 +39,8 @@ MainComponent::MainComponent()
     // Add OSC path listeners
     addListener (this, "/path");
     addListener (this, "/params");
+    addListener (this, "/osc_from_js");
+    addListener (this, "/osc_from_js_is_looping");
 
     // Add keyboard listener
     addKeyListener(this);
@@ -92,7 +94,8 @@ void MainComponent::getNextAudioBlock (const juce::AudioSourceChannelInfo& buffe
 {
     int numSamples = bufferToFill.buffer->getNumSamples();
     // Your audio-processing code goes here!
-    if(generatedIdx > -1){
+    // Normal, linear playbaack of trajectory
+    if(!isLooping && generatedIdx > -1){
         bufferToFill.buffer->clear(0, numSamples);
         bufferToFill.buffer->addFrom(0, 0, generated, 0, generatedIdx, numSamples);
         bufferToFill.buffer->addFrom(1, 0, generated, 1, generatedIdx, numSamples);
@@ -111,8 +114,11 @@ void MainComponent::getNextAudioBlock (const juce::AudioSourceChannelInfo& buffe
             triggerAsyncUpdate();
 
             // Generate trajectory from audio
-            generated = traverser->generateTrajectoryFromAudio(recordingBuffer);
-
+            auto gen = traverser->generateTrajectoryFromAudio(recordingBuffer);
+            // Audio
+            generated = get<0>(gen);
+            // Grain data
+            generatedGrains = get<1>(gen);
             return;
         }
         auto* device = deviceManager.getCurrentAudioDevice();
@@ -138,6 +144,16 @@ void MainComponent::getNextAudioBlock (const juce::AudioSourceChannelInfo& buffe
         if(recordingIdx >= recordingBuffer.getNumSamples()){
             recordingIdx = -1;
         }
+    }
+
+    else if(isLooping){
+        if(generatedIdx >= loopingGrainEndIdx){
+            generatedIdx = loopingGrainStartIdx;
+        }
+        bufferToFill.buffer->clear(0, numSamples);
+        bufferToFill.buffer->addFrom(0, 0, generated, 0, generatedIdx, numSamples);
+        bufferToFill.buffer->addFrom(1, 0, generated, 1, generatedIdx, numSamples);
+        generatedIdx += numSamples;
     }
 
     else {
@@ -182,7 +198,11 @@ void MainComponent::initialiseGUI(){
     // Create initial random trajectory
     // Only execute if db is populated
     if(dbConnector->isPopulated()){
-        generated = traverser->initialiseRandomTrajectory(GRAINS_IN_TRAJECTORY);
+        auto gen = traverser->initialiseRandomTrajectory(GRAINS_IN_TRAJECTORY);
+        // Audio
+        generated = get<0>(gen);
+        // Grain data
+        generatedGrains = get<1>(gen);
     }
 
     // Yes button
@@ -227,7 +247,11 @@ void MainComponent::buttonClicked(juce::Button *button) {
     }
     if(button == resetButton.get()){
         // Create new random trajectory
-        generated = traverser->initialiseRandomTrajectory(GRAINS_IN_TRAJECTORY);
+        auto gen = traverser->initialiseRandomTrajectory(GRAINS_IN_TRAJECTORY);
+        // Audio
+        generated = get<0>(gen);
+        // Grain data
+        generatedGrains = get<1>(gen);
 
         // Reset generated buffer index -> plays the current trajectory
         generatedIdx = 0;
@@ -237,9 +261,6 @@ void MainComponent::buttonClicked(juce::Button *button) {
 void MainComponent::oscMessageReceived (const juce::OSCMessage& message){
     String address = message.getAddressPattern().toString();
 
-    if(address == "/path"){
-        String content = message[0].getString();
-    }
     if(address == "/params"){
         // Handle new set of grain parameters
         vector<float> params;
@@ -248,8 +269,32 @@ void MainComponent::oscMessageReceived (const juce::OSCMessage& message){
         }
 
         // Map list of raw parameters and generate new grain trajectory
-        generated = traverser->generateTrajectoryFromParams(params);
-        generatedIdx = 0;
+        auto gen = traverser->initialiseRandomTrajectory(GRAINS_IN_TRAJECTORY);
+        // Audio
+        generated = get<0>(gen);
+        // Grain data
+        generatedGrains = get<1>(gen);
+
+        fprintf(stdout, "New trajectory received.");
+//        generatedIdx = 0;
+    }
+
+    if(address == "/osc_from_js"){
+        // Handle incoming OSC data from mobile JS interface:
+        // This is for playback of an existing trajectory. We want to loop a grain based on the
+        // phone orientation. Through tilting the phone users can "go along" a trajectory.
+        // First, map the incoming value (in the range of [0...1]) to nearest grain start index
+        float incoming = message[0].getFloat32();
+        loopingGrainStartIdx = static_cast<int>(mapFloat(incoming, 0.0f, 1.0f, 0.0f, static_cast<float>(GRAINS_IN_TRAJECTORY))) * GRAIN_LENGTH;
+        loopingGrainEndIdx = loopingGrainStartIdx + GRAIN_LENGTH;
+    }
+    if(address == "/osc_from_js_is_looping"){
+        isLooping = message[0].getInt32() != 0;
+        if(isLooping){
+            generatedIdx = loopingGrainStartIdx;
+        } else {
+            generatedIdx = -1;
+        }
     }
 }
 
@@ -300,6 +345,26 @@ bool MainComponent::keyPressed(const KeyPress &key, Component *originatingCompon
     if(key.getTextCharacter() == 'p'){
         // Start recorded playback
         recordingIdx = 0;
+    }
+    if(key.getTextCharacter() == 't'){
+        // Create grains from recording and send to RL agent
+        OSCMessage* message = new OSCMessage("/prime_trajectory");
+
+        // Convert recording buffer to grains
+        vector<float> data = traverser->convertAudioBufferToRLFormat(recordingBuffer);
+
+        // Each attribute of each grain is one message argument
+        for(auto& entry : data){
+            message->addFloat32(entry);
+        }
+
+        sender.send(*message);
+    }
+    if(key.getTextCharacter() == '.'){
+        // Pause/unpause agent
+        isAgentPaused = !isAgentPaused;
+        OSCMessage* message = new OSCMessage("/pause", isAgentPaused);
+        sender.send(*message);
     }
     return true;
 }

@@ -27,74 +27,47 @@ DBConnector::DBConnector() {
       "IDX            INT     NOT NULL,"
       "LOUDNESS       REAL    NOT NULL,"
       "SPECTRAL_CENTROID         REAL NOT NULL,"
-      "SPECTRAL_FLUX REAL NOT NULL"
+      "SPECTRAL_FLUX REAL NOT NULL,"
+      "PITCH REAL NOT NULL"
       ");";
     rc = sqlite3_exec(db, sql.c_str(), nullptr, nullptr, &zErrMsg);
 
     if( rc != SQLITE_OK ){
-        fprintf(stderr, "SQL error: %s\n", zErrMsg);
+//        fprintf(stderr, "SQL error: %s\n", zErrMsg);
         sqlite3_free(zErrMsg);
     } else {
 //        fprintf(stdout, "Table created successfully\n");
     }
 }
 
-void DBConnector::insertGrain(Grain &grain) {
+void DBConnector::insertGrains(vector<Grain>& grains) {
     std::string sql;
 
-    sql = "INSERT INTO GRAIN (NAME, PATH, IDX, LOUDNESS, SPECTRAL_CENTROID) VALUES ('"
-          + grain.getName() +  "', '"
-          + grain.getPath() + "', " + to_string(grain.getIdx()) + ", "
-          + to_string(grain.getLoudness()) + ", "
-          + to_string(grain.getSpectralCentroid()) + " );";
-
-
-    const char* cstr = sql.c_str();
-
-    char *zErrMsg = nullptr;
-    int rc;
-
-    /* Execute SQL statement */
-    rc = sqlite3_exec(db, cstr, nullptr, nullptr, &zErrMsg);
-
-    if( rc != SQLITE_OK ){
-        fprintf(stderr, "SQL error: %s\n", zErrMsg);
-        sqlite3_free(zErrMsg);
-    }
-}
-
-void DBConnector::insertGrains(vector<unique_ptr<Grain>>& grains) {
-    std::string sql;
-
-    sql = "INSERT INTO GRAIN (NAME, PATH, IDX, LOUDNESS, SPECTRAL_CENTROID, SPECTRAL_FLUX) VALUES ";
+    sql = "INSERT INTO GRAIN (NAME, PATH, IDX, LOUDNESS, SPECTRAL_CENTROID, SPECTRAL_FLUX, PITCH) VALUES ";
 
     for(unsigned long i = 0; i < grains.size(); i++){
-        Grain& grain = *grains.at(i);
+        Grain& grain = grains.at(i);
         sql += "('"
                 + grain.getName() +  "', '"
                 + grain.getPath() + "', " + to_string(grain.getIdx()) + ", "
                 + to_string(grain.getLoudness()) + ", "
                 + to_string(grain.getSpectralCentroid()) + ", "
-                + to_string(grain.getSpectralFlux())
+                + to_string(grain.getSpectralFlux()) + ", "
+                + to_string(grain.getPitch())
                 + ")";
         if(i < grains.size() - 1){
             sql += ",";
         }
     }
-
     sql += ";";
-
-
-    const char* cstr = sql.c_str();
 
     char *zErrMsg = nullptr;
     int rc;
 
     /* Execute SQL statement */
-    rc = sqlite3_exec(db, cstr, nullptr, nullptr, &zErrMsg);
-
+    rc = sqlite3_exec(db, sql.c_str(), nullptr, nullptr, &zErrMsg);
     if( rc != SQLITE_OK ){
-        fprintf(stderr, "SQL error: %s\n", zErrMsg);
+//        fprintf(stderr, "SQL error: %s\n", zErrMsg);
         sqlite3_free(zErrMsg);
     }
 }
@@ -104,9 +77,6 @@ DBConnector::~DBConnector() {
 }
 
 static int closestGrainCallback(void *data, int argc, char **argv, char **azColName){
-    fprintf(stdout, "%s: ", (const char*)data);
-
-//    auto* grain = static_cast<Grain*>(data);
     vector<Grain>* grains = static_cast<vector<Grain>*>(data);
 
     try{
@@ -119,12 +89,14 @@ static int closestGrainCallback(void *data, int argc, char **argv, char **azColN
         float loudness = (float)strtod(argv[4], nullptr);
         float sc = (float)strtod(argv[5], nullptr);
         float spectralFlux = (float)strtod(argv[6], nullptr);
+        float pitch = (float)strtod(argv[7], nullptr);
 
         grain.setIdx(idx);
         grain.setPath(path);
         grain.setLoudness(loudness);
         grain.setSpectralCentroid(sc);
         grain.setSpectralFlux(spectralFlux);
+        grain.setPitch(pitch);
 
         grains->emplace_back(grain);
     } catch (...) {
@@ -142,6 +114,7 @@ vector<Grain> DBConnector::queryClosestGrain(Grain &grain, float margin) {
     string sc = to_string(grain.getSpectralCentroid());
 
     float scMargin = margin * 5.0f;
+    float sfMargin = 0.1f;
 
     string sql;
     sql = "SELECT * FROM GRAIN WHERE"
@@ -149,25 +122,22 @@ vector<Grain> DBConnector::queryClosestGrain(Grain &grain, float margin) {
           " AND " +
           " SPECTRAL_CENTROID BETWEEN " + to_string(grain.getSpectralCentroid() - scMargin) + " AND " + to_string(grain.getSpectralCentroid() + scMargin) +
           " AND " +
-          " SPECTRAL_FLUX BETWEEN " + to_string(grain.getSpectralFlux() - 5.0f) + " AND " + to_string(
-            grain.getSpectralFlux() + 5.0f) +
-          " ORDER BY ABS(LOUDNESS - " + to_string(grain.getLoudness()) + ")" +
+          " SPECTRAL_FLUX BETWEEN " + to_string(grain.getSpectralFlux() - sfMargin) + " AND " + to_string(grain.getSpectralFlux() + sfMargin) +
+          " AND " +
+          " PITCH BETWEEN " + to_string(grain.getPitch() - scMargin) + " AND " + to_string(grain.getPitch() + scMargin) +
+//          " ORDER BY ABS(SPECTRAL_CENTROID - " + to_string(grain.getSpectralCentroid()) + ")" +
           " LIMIT 10"
           ";";
 
     char *zErrMsg = nullptr;
     int rc;
-
     vector<Grain> found;
-
     /* Execute SQL statement */
     rc = sqlite3_exec(db, sql.c_str(), closestGrainCallback, &found, &zErrMsg);
-
     if( rc != SQLITE_OK ){
         fprintf(stderr, "SQL error: %s\n", zErrMsg);
         sqlite3_free(zErrMsg);
     }
-
     return found;
 }
 

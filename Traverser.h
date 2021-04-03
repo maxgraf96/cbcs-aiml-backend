@@ -23,9 +23,13 @@ class Traverser {
 public:
     Traverser(DBConnector& connector, Analyser& analyser);
 
-    AudioBuffer<float> initialiseRandomTrajectory(int lengthInGrains);
-    AudioBuffer<float> generateTrajectoryFromParams(vector<float> params);
-    AudioBuffer<float> generateTrajectoryFromAudio(AudioBuffer<float>& buffer);
+    tuple<AudioBuffer<float>, vector<Grain>> initialiseRandomTrajectory(int lengthInGrains);
+    tuple<AudioBuffer<float>, vector<Grain>> generateTrajectoryFromParams(vector<float> params);
+    tuple<AudioBuffer<float>, vector<Grain>> generateTrajectoryFromAudio(AudioBuffer<float>& buffer);
+
+    // For sending grains to RL agent
+    vector<float> convertAudioBufferToRLFormat(AudioBuffer<float>& buffer);
+
     void calculateFeatureStatistics();
     bool isMinMaxInitialised() const;
 
@@ -37,7 +41,10 @@ private:
     vector<Grain> target;
     AudioFormatManager formatManager;
 
-    Grain findBestGrain(Grain& src, vector<Grain>& grains);
+    bool init();
+
+    Grain findBestGrain(Grain& src, vector<Grain>& grains) const;
+    tuple<AudioBuffer<float>, vector<Grain>> generateTargetGrains();
 
     float minLoudness = 0.0f;
     float maxLoudness = 0.0f;
@@ -53,6 +60,11 @@ private:
     float maxSF = 0.0f;
     float meanSF = 0.0f;
     float stdSF = 0.0f;
+
+    float minPitch = 0.0f;
+    float maxPitch = 0.0f;
+    float meanPitch = 0.0f;
+    float stdPitch = 0.0f;
 };
 
 

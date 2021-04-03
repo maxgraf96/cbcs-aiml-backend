@@ -14,16 +14,27 @@ class Grain {
 public:
     Grain();
 
-    Grain(const string &name, const string &path, int idx, float loudness, float spectralCentroid, float spectralFlux);
-    Grain(float loudness, float spectralCentroid, float spectralFlux);
+    Grain(string name,
+          string path,
+          int idx,
+          float loudness,
+          float spectralCentroid,
+          float spectralFlux,
+          float pitch
+          );
+    Grain(float loudness,
+          float spectralCentroid,
+          float spectralFlux,
+          float pitch);
 
 private:
-    string name = "";
-    string path = "";
+    string name;
+    string path;
     int idx = -1;
     float loudness = 0.0f;
     float spectralCentroid = 0.0f;
     float spectralFlux = 0.0f;
+    float pitch = 0.0f;
 
 public:
 
@@ -50,6 +61,10 @@ public:
     float getSpectralFlux() const;
 
     void setSpectralFlux(float sf);
+
+    float getPitch() const;
+
+    void setPitch(float pitch);
 
 };
 

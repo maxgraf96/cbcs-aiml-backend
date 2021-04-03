@@ -16,8 +16,7 @@ public:
     DBConnector();
     ~DBConnector();
 
-    void insertGrain(Grain& grain);
-    void insertGrains(vector<unique_ptr<Grain>>& grain);
+    void insertGrains(vector<Grain>& grains);
     vector<Grain> queryClosestGrain(Grain& grain, float margin);
     float queryMax(const string& field);
     float queryMin(const string& field);

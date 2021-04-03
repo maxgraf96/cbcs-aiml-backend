@@ -4,13 +4,35 @@
 
 #include "Grain.h"
 
-Grain::Grain(const string &name, const string &path, int idx, float loudness, float spectralCentroid, float spectralFlux)
-    : name(name), path(path), idx(idx), loudness(loudness), spectralCentroid(spectralCentroid), spectralFlux(spectralFlux){
-}
+#include <utility>
 
-Grain::Grain(float loudness, float spectralCentroid, float spectralFlux)
-    : loudness(loudness), spectralCentroid(spectralCentroid), spectralFlux(spectralFlux) {
-}
+Grain::Grain(string name,
+             string path,
+             int idx,
+             float loudness,
+             float spectralCentroid,
+             float spectralFlux,
+             float pitch
+             ):
+    name(std::move(name)),
+    path(std::move(path)),
+    idx(idx),
+    loudness(loudness),
+    spectralCentroid(spectralCentroid),
+    spectralFlux(spectralFlux),
+    pitch(pitch)
+    {}
+
+Grain::Grain(float loudness,
+             float spectralCentroid,
+             float spectralFlux,
+             float pitch
+             ):
+             loudness(loudness),
+             spectralCentroid(spectralCentroid),
+             spectralFlux(spectralFlux),
+             pitch(pitch)
+             {}
 
 Grain::Grain() {
 
@@ -62,4 +84,12 @@ float Grain::getSpectralFlux() const {
 
 void Grain::setSpectralFlux(float sf) {
     Grain::spectralFlux = sf;
+}
+
+float Grain::getPitch() const {
+    return pitch;
+}
+
+void Grain::setPitch(float pitch) {
+    Grain::pitch = pitch;
 }

@@ -11,149 +11,42 @@ Traverser::Traverser(DBConnector& connector, Analyser& analyser)
     calculateFeatureStatistics();
 }
 
-AudioBuffer<float> Traverser::generateTrajectoryFromParams(vector<float> params){
-    if(!isMinMaxInitialised()){
-        fprintf(stderr, "Min-max not initialised");
-        AudioBuffer<float>* buffer = new AudioBuffer<float>(2, 512);
-        return *buffer;
+tuple<AudioBuffer<float>, vector<Grain>> Traverser::generateTrajectoryFromParams(vector<float> params){
+    if(!init()){
+        return make_tuple(AudioBuffer<float>(0, 0), vector<Grain>());
     }
-    // Clear source and target vectors
-    source.clear();
-    target.clear();
-
+    // Create source from RL parameters
     // Define length of trajectory
-    // TODO change when adding new audio features
-    int lengthInGrains = (int)(params.size() / NUM_FEATURES);
+    for(int i = 0; i < params.size(); i += NUM_FEATURES){
+        float loudness = mapFloat(params[i], 0.0f, 1.0f, minLoudness, maxLoudness);
+        float sc = mapFloat(params[i + 1], 0.0f, 1.0f, minSC, maxSC);
+        float sf = mapFloat(params[i + 2], 0.0f, 1.0f, minSF, maxSF);; // Spectral flux
+        // Limit pitch to 0-10000
+        float pitchHi = 4.0f;
+        float pitch = mapFloat(params[i + 3], 0.0f, pitchHi, minPitch, maxPitch);
 
-    // Create new grains from incoming parameters
-    for(int i = 0; i < lengthInGrains; i += NUM_FEATURES){
-        float loudness = mapFloat(params.at(i), 0.0f, 1.0f, minLoudness, maxLoudness);
-        float sc = mapFloat(params.at(i + 1), 0.0f, 1.0f, minSC, maxSC);
-        float sf = mapFloat(params.at(i + 2), 0.0f, 1.0f, minSF, maxSF);; // Spectral flux
-
-        Grain* grain = new Grain(loudness, sc, sf);
+        Grain* grain = new Grain(loudness, sc, sf, pitch);
         source.emplace_back(*grain);
     }
 
-    // Find target grains from database
-    for(Grain& sourceGrain : source){
-        float margin = 100.0f;
-        vector<Grain> found = dbConnector.queryClosestGrain(sourceGrain, margin);
-        Grain bestMatch;
-
-        if(!found.empty()){
-            // Calculate best grain based on weighted euclidean distance
-            bestMatch = findBestGrain(sourceGrain, found);
-        }
-
-        target.emplace_back(bestMatch);
-    }
-
-    // Get sound data
-    int channels = 2;
-    int lengthInSamples = lengthInGrains * GRAIN_LENGTH;
-    AudioBuffer<float>* buffer = new AudioBuffer<float>(channels, lengthInSamples);
-    int bufferIdx = 0;
-
-    for(Grain& grain : target){
-        // Check if grain is valid
-        if(!grain.getPath().empty()){
-            // Load audio file if not yet in memory
-            ScopedPointer<AudioFormatReader> reader = formatManager.createReaderFor(File(grain.getPath()));
-            reader->read(buffer, bufferIdx, GRAIN_LENGTH, grain.getIdx(), true, true);
-            bufferIdx += GRAIN_LENGTH;
-        }
-    }
-
-    return *buffer;
+    return generateTargetGrains();
 }
 
-AudioBuffer<float> Traverser::initialiseRandomTrajectory(int lengthInGrains) {
-    if(!isMinMaxInitialised()){
-        fprintf(stderr, "Min-max not initialised");
-        AudioBuffer<float>* buffer = new AudioBuffer<float>(2, 512);
-        return *buffer;
-    }
-    // Clear source and target vectors
-    source.clear();
-    target.clear();
-
-    for(int i = 0; i < lengthInGrains; i++){
-        // Generate random values in range for each field
-        float rLoudness = minLoudness + static_cast <float> (rand()) /( static_cast <float> (RAND_MAX/(maxLoudness-minLoudness)));
-        float rSC = minSC + static_cast <float> (rand()) /( static_cast <float> (RAND_MAX/(maxSC-minSC)));
-        float rSF = minSF + static_cast <float> (rand()) / ( static_cast <float> (RAND_MAX / (maxSF - minSF)));
-
-        Grain* grain = new Grain(rLoudness, rSC, rSF);
-        source.emplace_back(*grain);
+tuple<AudioBuffer<float>, vector<Grain>> Traverser::generateTrajectoryFromAudio(AudioBuffer<float>& input) {
+    if(!init()){
+        return make_tuple(AudioBuffer<float>(0, 0), vector<Grain>());
     }
 
-    // Find target grains from database
-    float margin = 100;
-    for(Grain& sourceGrain : source){
-        vector<Grain> found = dbConnector.queryClosestGrain(sourceGrain, margin);
-        Grain bestMatch;
-
-        if(!found.empty()){
-            // Calculate best grain based on weighted euclidean distance
-            bestMatch = findBestGrain(sourceGrain, found);
-        }
-
-        target.emplace_back(bestMatch);
-    }
-
-    // Get sound data
-    int channels = 2;
-    int lengthInSamples = lengthInGrains * GRAIN_LENGTH;
-    AudioBuffer<float>* buffer = new AudioBuffer<float>(channels, lengthInSamples);
-    int bufferIdx = 0;
-
-    map<string, AudioBuffer<float>*> sourceData;
-    for(Grain& grain : target){
-        // Check if grain is valid
-        if(!grain.getPath().empty()){
-            // Load audio file if not yet in memory
-            ScopedPointer<AudioFormatReader> reader = formatManager.createReaderFor(File(grain.getPath()));
-            reader->read(buffer, bufferIdx, GRAIN_LENGTH, grain.getIdx(), true, true);
-            bufferIdx += GRAIN_LENGTH;
-        }
-    }
-
-    return *buffer;
+    // Create source from input audio
+    source = analyser.audioBufferToGrains(input);
+    return generateTargetGrains();
 }
 
-void Traverser::calculateFeatureStatistics() {
-    // Get min and max values from database
-    if (dbConnector.isPopulated()){
-        string loudness = "LOUDNESS";
-        string sc = "SPECTRAL_CENTROID";
-        string sf = "SPECTRAL_FLUX";
-
-        minLoudness = dbConnector.queryMin(loudness);
-        maxLoudness = dbConnector.queryMax(loudness);
-        meanLoudness = dbConnector.queryMean(loudness);
-        stdLoudness = dbConnector.queryStd(loudness);
-
-        minSC = dbConnector.queryMin(sc);
-        maxSC = dbConnector.queryMax(sc);
-        meanSC = dbConnector.queryMean(sc);
-        stdSC = dbConnector.queryStd(sc);
-
-        minSF = dbConnector.queryMin(sf);
-        maxSF = dbConnector.queryMax(sf);
-        meanSF = dbConnector.queryMean(sf);
-        stdSF = dbConnector.queryStd(sf);
-    }
-}
-
-bool Traverser::isMinMaxInitialised() const {
-    return static_cast<int>(maxLoudness) > 0;
-}
-
-Grain Traverser::findBestGrain(Grain& src, vector<Grain>& grains) {
-    float wLoudness = 0.5f;
-    float wSC = 0.4f;
-    float wSF = 0.1f;
+Grain Traverser::findBestGrain(Grain& src, vector<Grain>& grains) const {
+    float wLoudness = 1.0f;
+    float wSC = 1.5f;
+    float wSF = 0.5f;
+    float wPitch = 2.5f;
 
     Grain bestMatch;
     vector<float> distances;
@@ -162,6 +55,7 @@ Grain Traverser::findBestGrain(Grain& src, vector<Grain>& grains) {
         distance += (powf((candidate.getLoudness() - src.getLoudness()), 2) / stdLoudness) * wLoudness;
         distance += (powf((candidate.getSpectralCentroid() - src.getSpectralCentroid()), 2) / stdSC) * wSC;
         distance += (powf((candidate.getSpectralFlux() - src.getSpectralFlux()), 2) / stdSF) * wSF;
+        distance += (powf((candidate.getPitch() - src.getPitch()), 2) / stdPitch) * wPitch;
 
         distances.emplace_back(distance * 100.0f);
     }
@@ -173,19 +67,27 @@ Grain Traverser::findBestGrain(Grain& src, vector<Grain>& grains) {
     return bestMatch;
 }
 
-AudioBuffer<float> Traverser::generateTrajectoryFromAudio(AudioBuffer<float>& input) {
-    if(!isMinMaxInitialised()){
-        fprintf(stderr, "Min-max not initialised");
-        AudioBuffer<float>* buffer = new AudioBuffer<float>(2, 512);
-        return *buffer;
+tuple<AudioBuffer<float>, vector<Grain>> Traverser::initialiseRandomTrajectory(int lengthInGrains) {
+    if(!init()){
+        return make_tuple(AudioBuffer<float>(0, 0), vector<Grain>());
     }
 
-    // Clear source and target vectors
-    source.clear();
-    target.clear();
+    // Create random source
+    for(int i = 0; i < lengthInGrains; i++){
+        // Generate random values in range for each field
+        float rLoudness = minLoudness + static_cast <float> (rand()) /( static_cast <float> (RAND_MAX/(maxLoudness-minLoudness)));
+        float rSC = minSC + static_cast <float> (rand()) /( static_cast <float> (RAND_MAX/(maxSC-minSC)));
+        float rSF = minSF + static_cast <float> (rand()) / ( static_cast <float> (RAND_MAX / (maxSF - minSF)));
+        float rPitch = minPitch + static_cast <float> (rand()) / ( static_cast <float> (RAND_MAX / (maxPitch - minPitch)));
 
-    source = analyser.audioBufferToGrains(input);
+        Grain* grain = new Grain(rLoudness, rSC, rSF, rPitch);
+        source.emplace_back(*grain);
+    }
 
+    return generateTargetGrains();
+}
+
+tuple<AudioBuffer<float>, vector<Grain>> Traverser::generateTargetGrains(){
     // Find target grains from database
     float margin = 100;
     for(Grain& sourceGrain : source){
@@ -215,5 +117,71 @@ AudioBuffer<float> Traverser::generateTrajectoryFromAudio(AudioBuffer<float>& in
         }
     }
 
-    return *buffer;
+    return make_tuple(*buffer, target);
+}
+
+void Traverser::calculateFeatureStatistics() {
+    // Get min and max values from database
+    if (dbConnector.isPopulated()){
+        string loudness = "LOUDNESS";
+        string sc = "SPECTRAL_CENTROID";
+        string sf = "SPECTRAL_FLUX";
+        string pitch = "PITCH";
+
+        minLoudness = dbConnector.queryMin(loudness);
+        maxLoudness = dbConnector.queryMax(loudness);
+        meanLoudness = dbConnector.queryMean(loudness);
+        stdLoudness = dbConnector.queryStd(loudness);
+
+        minSC = dbConnector.queryMin(sc);
+        maxSC = dbConnector.queryMax(sc);
+        meanSC = dbConnector.queryMean(sc);
+        stdSC = dbConnector.queryStd(sc);
+
+        minSF = dbConnector.queryMin(sf);
+        maxSF = dbConnector.queryMax(sf);
+        meanSF = dbConnector.queryMean(sf);
+        stdSF = dbConnector.queryStd(sf);
+
+        minPitch = dbConnector.queryMin(pitch);
+        maxPitch = dbConnector.queryMax(pitch);
+        meanPitch = dbConnector.queryMean(pitch);
+        stdPitch = dbConnector.queryStd(pitch);
+    }
+}
+
+bool Traverser::isMinMaxInitialised() const {
+    return static_cast<int>(maxLoudness) > 0;
+}
+
+bool Traverser::init() {
+    // Clear source and target vectors
+    source.clear();
+    target.clear();
+
+    if(isMinMaxInitialised()){
+        return true;
+    } else {
+        fprintf(stderr, "Min-max not initialised. AudioBuffer from trajectory will be empty.");
+    }
+
+    return false;
+}
+
+vector<float> Traverser::convertAudioBufferToRLFormat(AudioBuffer<float> &buffer) {
+    // Convert audio into grains
+    vector<Grain> grains = analyser.audioBufferToGrains(buffer);
+
+    vector<float> data;
+    data.reserve(grains.size() * static_cast<unsigned long>(NUM_FEATURES));
+
+    for(auto& grain : grains){
+        // Map each property
+        data.emplace_back(mapFloat(grain.getLoudness(), minLoudness, maxLoudness, 0.0f, 1.0f));
+        data.emplace_back(mapFloat(grain.getSpectralCentroid(), minSC, maxSC, 0.0f, 1.0f));
+        data.emplace_back(mapFloat(grain.getSpectralFlux(), minSF, maxSF, 0.0f, 1.0f));
+        data.emplace_back(mapFloat(grain.getPitch(), minPitch, maxPitch, 0.0f, 1.0f));
+    }
+
+    return data;
 }

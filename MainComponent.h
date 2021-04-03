@@ -64,7 +64,12 @@ private:
     unique_ptr<Traverser> traverser;
 
     AudioBuffer<float> generated;
+    vector<Grain> generatedGrains;
     int generatedIdx = -1;
+    // Flag for checking if we're currently looping via the OSC interface
+    bool isLooping = false;
+    int loopingGrainStartIdx = -1;
+    int loopingGrainEndIdx = -1;
 
     // GUI
     unique_ptr<TextButton> playButton;
@@ -83,7 +88,7 @@ private:
     void oscMessageReceived (const juce::OSCMessage& message) override;
 
     // RL management
-    String modelPath = "";
+    bool isAgentPaused = true;
 
     // Recording audio
     AudioBuffer<float> recordingBuffer;

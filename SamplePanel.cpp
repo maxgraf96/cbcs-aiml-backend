@@ -115,7 +115,7 @@ void SamplePanel::loadFile(const File& file) {
 	const auto fileExtension = file.getFileExtension();
     // Only accept wavs
     if(file.isDirectory()){
-        Array<File> wavs = file.findChildFiles(File::TypesOfFileToFind::findFiles, false, "*.wav");
+        Array<File> wavs = file.findChildFiles(File::TypesOfFileToFind::findFiles, true, "*.wav");
         int counter = 1;
         for(File& wav : wavs){
             juce::Logger::outputDebugString("Loading file " + to_string(counter++) + " of " + to_string(wavs.size()));
@@ -171,7 +171,8 @@ void SamplePanel::loadSingleFile(const File& file){
         }
 
         // Analyse with essentia
-        analyser.analyseFileBuffer(*sampleBuffer, file.getFileName().toStdString(), file.getFullPathName().toStdString());
+        analyser.analyseAndSaveToDB(*sampleBuffer, file.getFileName().toStdString(),
+                                    file.getFullPathName().toStdString());
     }
 }
 
