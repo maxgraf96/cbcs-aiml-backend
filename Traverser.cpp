@@ -9,6 +9,9 @@ Traverser::Traverser(DBConnector& connector, Analyser& analyser)
     formatManager.registerBasicFormats();
 
     calculateFeatureStatistics();
+
+    // Initialise window
+    window = make_unique<dsp::WindowingFunction<float>>(GRAIN_LENGTH, dsp::WindowingFunction<float>::WindowingMethod::hann);
 }
 
 tuple<AudioBuffer<float>, vector<Grain>> Traverser::generateTrajectoryFromParams(vector<float> params){
@@ -44,9 +47,9 @@ tuple<AudioBuffer<float>, vector<Grain>> Traverser::generateTrajectoryFromAudio(
 
 Grain Traverser::findBestGrain(Grain& src, vector<Grain>& grains) const {
     float wLoudness = 1.0f;
-    float wSC = 1.5f;
-    float wSF = 0.5f;
-    float wPitch = 2.5f;
+    float wSC = 0.1f;
+    float wSF = 1.0f;
+    float wPitch = 0.1f;
 
     Grain bestMatch;
     vector<float> distances;
@@ -67,7 +70,7 @@ Grain Traverser::findBestGrain(Grain& src, vector<Grain>& grains) const {
     return bestMatch;
 }
 
-tuple<AudioBuffer<float>, vector<Grain>> Traverser::initialiseRandomTrajectory(int lengthInGrains) {
+tuple<AudioBuffer<float>, vector<Grain>> Traverser::generateRandomTrajectory(int lengthInGrains) {
     if(!init()){
         return make_tuple(AudioBuffer<float>(0, 0), vector<Grain>());
     }
@@ -113,6 +116,9 @@ tuple<AudioBuffer<float>, vector<Grain>> Traverser::generateTargetGrains(){
             // Load audio file if not yet in memory
             ScopedPointer<AudioFormatReader> reader = formatManager.createReaderFor(File(grain.getPath()));
             reader->read(buffer, bufferIdx, GRAIN_LENGTH, grain.getIdx(), true, true);
+            // Apply window
+            window->multiplyWithWindowingTable(buffer->getWritePointer(0, bufferIdx), GRAIN_LENGTH);
+            window->multiplyWithWindowingTable(buffer->getWritePointer(1, bufferIdx), GRAIN_LENGTH);
             bufferIdx += GRAIN_LENGTH;
         }
     }

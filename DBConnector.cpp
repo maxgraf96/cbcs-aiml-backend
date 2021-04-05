@@ -10,7 +10,7 @@ DBConnector::DBConnector() {
     string sql;
 
     /* Open database */
-    rc = sqlite3_open("/tmp/test.db", &db);
+    rc = sqlite3_open(DB_PATH.c_str(), &db);
 //    rc = sqlite3_open(":memory:", &db);
 
     if( rc ) {

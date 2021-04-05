@@ -6,7 +6,7 @@
 #define DMLAP_BACKEND_CONSTANTS_H
 
 // Grain length in samples
-static int GRAINS_IN_TRAJECTORY = 50;
+static int GRAINS_IN_TRAJECTORY = 33;
 static int GRAIN_LENGTH = 4096;
 
 static int NUM_FEATURES = 4;

@@ -28,6 +28,7 @@ public:
 private:
     // SQLite Database
     sqlite3 *db;
+    string DB_PATH = "/Users/max/Desktop/test.db";
 };
 
 

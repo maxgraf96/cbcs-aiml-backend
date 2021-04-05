@@ -94,9 +94,9 @@ target_compile_definitions(GuiAppExample
 
 # Set relative paths for static libs
 set(ESSENTIA_PATH "${CMAKE_CURRENT_SOURCE_DIR}/external_libraries/essentia/lib")
-set(ROCKSDB_PATH "/usr/local/Cellar/rocksdb/6.17.3/lib")
+set(SQLITE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/external_libraries/sqlite")
+set(FFTW_PATH "${CMAKE_CURRENT_SOURCE_DIR}/external_libraries/fftw")
 
-include_directories("/usr/local/Cellar/rocksdb/6.17.3/include")
 include_directories("/usr/local/Cellar/sqlite/3.35.3/include")
 
 # `target_link_libraries` links libraries and JUCE modules to other libraries or executables. Here,
@@ -119,10 +119,9 @@ target_link_libraries(GuiAppExample
 
         # Statically linked essentia and rocksdb
         essentia -L${ESSENTIA_PATH}
-        rocksdb -L${ROCKSDB_PATH}
-        sqlite3 -L/usr/local/Cellar/sqlite/3.35.3/lib
+        sqlite3 -L${SQLITE_PATH}
 
         # Dependencies
-        fftw3 -L/usr/local/lib
-        fftw3f -L/usr/local/lib
-        )
+        fftw3 -L${FFTW_PATH}
+        fftw3f -L${FFTW_PATH}
+)

@@ -79,6 +79,10 @@ private:
     void initialiseGUI();
 
     unique_ptr<Label> recordingLabel;
+    unique_ptr<Label> isAgentRunningLabel;
+    // Indicate the wait time the agent needs to explore
+    unique_ptr<Label> isExploringLabel;
+
 
     // OSC for communication with python RL agent
     OSCSender sender;
@@ -86,9 +90,11 @@ private:
     int oscListeningPort = 12000;
     void showConnectionErrorMessage (const String& messageText);
     void oscMessageReceived (const juce::OSCMessage& message) override;
+    int oscCounter = 0;
 
     // RL management
     bool isAgentPaused = true;
+    void primeTrajectory();
 
     // Recording audio
     AudioBuffer<float> recordingBuffer;

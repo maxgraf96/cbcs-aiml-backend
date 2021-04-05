@@ -23,7 +23,7 @@ class Traverser {
 public:
     Traverser(DBConnector& connector, Analyser& analyser);
 
-    tuple<AudioBuffer<float>, vector<Grain>> initialiseRandomTrajectory(int lengthInGrains);
+    tuple<AudioBuffer<float>, vector<Grain>> generateRandomTrajectory(int lengthInGrains);
     tuple<AudioBuffer<float>, vector<Grain>> generateTrajectoryFromParams(vector<float> params);
     tuple<AudioBuffer<float>, vector<Grain>> generateTrajectoryFromAudio(AudioBuffer<float>& buffer);
 
@@ -65,6 +65,9 @@ private:
     float maxPitch = 0.0f;
     float meanPitch = 0.0f;
     float stdPitch = 0.0f;
+
+    // DSP stuff
+    unique_ptr<dsp::WindowingFunction<float>> window;
 };
 
 

@@ -41,9 +41,22 @@ MainComponent::MainComponent()
     addListener (this, "/params");
     addListener (this, "/osc_from_js");
     addListener (this, "/osc_from_js_is_looping");
+    addListener (this, "/osc_from_js_left_channel_data");
+    addListener (this, "/osc_from_js_right_channel_data");
+    addListener (this, "/osc_from_js_audio_transmission_done");
+    addListener (this, "/osc_from_js_clear_recording_buffer");
+    addListener (this, "/osc_from_js_play");
+    addListener (this, "/osc_from_js_agent_feedback");
+    addListener (this, "/osc_from_js_agent_zone_feedback");
+    addListener (this, "/osc_from_js_pause_agent");
+    addListener (this, "/osc_from_js_record_in_JUCE");
+    addListener (this, "/osc_from_js_explore");
+    addListener (this, "/explore_state_done");
 
     // Add keyboard listener
     addKeyListener(this);
+
+    generated = AudioBuffer<float>(2, GRAIN_LENGTH * GRAINS_IN_TRAJECTORY);
 }
 
 MainComponent::~MainComponent()
@@ -88,6 +101,7 @@ void MainComponent::prepareToPlay (int samplesPerBlockExpected, double sampleRat
     analyser->initialise(sampleRate, samplesPerBlockExpected);
 
     recordingBuffer.setSize(2, GRAINS_IN_TRAJECTORY * GRAIN_LENGTH);
+    recordingBuffer.clear();
 }
 
 void MainComponent::getNextAudioBlock (const juce::AudioSourceChannelInfo& bufferToFill)
@@ -95,7 +109,7 @@ void MainComponent::getNextAudioBlock (const juce::AudioSourceChannelInfo& buffe
     int numSamples = bufferToFill.buffer->getNumSamples();
     // Your audio-processing code goes here!
     // Normal, linear playbaack of trajectory
-    if(!isLooping && generatedIdx > -1){
+    if(!isLooping && isAgentPaused && generatedIdx > -1){
         bufferToFill.buffer->clear(0, numSamples);
         bufferToFill.buffer->addFrom(0, 0, generated, 0, generatedIdx, numSamples);
         bufferToFill.buffer->addFrom(1, 0, generated, 1, generatedIdx, numSamples);
@@ -112,13 +126,6 @@ void MainComponent::getNextAudioBlock (const juce::AudioSourceChannelInfo& buffe
             isRecording = false;
             recordingIdx = -1;
             triggerAsyncUpdate();
-
-            // Generate trajectory from audio
-            auto gen = traverser->generateTrajectoryFromAudio(recordingBuffer);
-            // Audio
-            generated = get<0>(gen);
-            // Grain data
-            generatedGrains = get<1>(gen);
             return;
         }
         auto* device = deviceManager.getCurrentAudioDevice();
@@ -154,6 +161,16 @@ void MainComponent::getNextAudioBlock (const juce::AudioSourceChannelInfo& buffe
         bufferToFill.buffer->addFrom(0, 0, generated, 0, generatedIdx, numSamples);
         bufferToFill.buffer->addFrom(1, 0, generated, 1, generatedIdx, numSamples);
         generatedIdx += numSamples;
+    } else if (!isAgentPaused){
+        // Loop generated
+        bufferToFill.buffer->clear(0, numSamples);
+        bufferToFill.buffer->addFrom(0, 0, generated, 0, generatedIdx, numSamples);
+        bufferToFill.buffer->addFrom(1, 0, generated, 1, generatedIdx, numSamples);
+        generatedIdx += numSamples;
+
+        if(generatedIdx >= generated.getNumSamples()){
+            generatedIdx = 0;
+        }
     }
 
     else {
@@ -198,7 +215,7 @@ void MainComponent::initialiseGUI(){
     // Create initial random trajectory
     // Only execute if db is populated
     if(dbConnector->isPopulated()){
-        auto gen = traverser->initialiseRandomTrajectory(GRAINS_IN_TRAJECTORY);
+        auto gen = traverser->generateRandomTrajectory(GRAINS_IN_TRAJECTORY);
         // Audio
         generated = get<0>(gen);
         // Grain data
@@ -228,10 +245,22 @@ void MainComponent::initialiseGUI(){
 
     // Add labels
     recordingLabel = make_unique<Label>("recordingLabel");
-    recordingLabel->setText("Recording...", dontSendNotification);
+    recordingLabel->setText("Recording / receiving...", dontSendNotification);
     recordingLabel->setBounds(getWidth() - 124, getHeight() - 74, 100, 50);
     addAndMakeVisible(*recordingLabel);
     recordingLabel->setVisible(false);
+
+    isAgentRunningLabel = make_unique<Label>("agentRunningLabel");
+    isAgentRunningLabel->setText("Agent running...", dontSendNotification);
+    isAgentRunningLabel->setBounds(getWidth() - 124 * 2, getHeight() - 74, 100, 50);
+    addAndMakeVisible(*isAgentRunningLabel);
+    isAgentRunningLabel->setVisible(false);
+
+    isExploringLabel = make_unique<Label>("agentRunningLabel");
+    isExploringLabel->setText("Exploring...", dontSendNotification);
+    isExploringLabel->setBounds(getWidth() - 124, getHeight() - 74, 100, 50);
+    addAndMakeVisible(*isExploringLabel);
+    isExploringLabel->setVisible(false);
 }
 
 void MainComponent::buttonClicked(juce::Button *button) {
@@ -247,7 +276,7 @@ void MainComponent::buttonClicked(juce::Button *button) {
     }
     if(button == resetButton.get()){
         // Create new random trajectory
-        auto gen = traverser->initialiseRandomTrajectory(GRAINS_IN_TRAJECTORY);
+        auto gen = traverser->generateRandomTrajectory(GRAINS_IN_TRAJECTORY);
         // Audio
         generated = get<0>(gen);
         // Grain data
@@ -269,14 +298,13 @@ void MainComponent::oscMessageReceived (const juce::OSCMessage& message){
         }
 
         // Map list of raw parameters and generate new grain trajectory
-        auto gen = traverser->initialiseRandomTrajectory(GRAINS_IN_TRAJECTORY);
+        auto gen = traverser->generateTrajectoryFromParams(params);
         // Audio
         generated = get<0>(gen);
         // Grain data
         generatedGrains = get<1>(gen);
 
-        fprintf(stdout, "New trajectory received.");
-//        generatedIdx = 0;
+        fprintf(stdout, "New trajectory from RL params created.\n");
     }
 
     if(address == "/osc_from_js"){
@@ -285,7 +313,7 @@ void MainComponent::oscMessageReceived (const juce::OSCMessage& message){
         // phone orientation. Through tilting the phone users can "go along" a trajectory.
         // First, map the incoming value (in the range of [0...1]) to nearest grain start index
         float incoming = message[0].getFloat32();
-        loopingGrainStartIdx = static_cast<int>(mapFloat(incoming, 0.0f, 1.0f, 0.0f, static_cast<float>(GRAINS_IN_TRAJECTORY))) * GRAIN_LENGTH;
+        loopingGrainStartIdx = static_cast<int>(mapFloat(incoming, 0.0f, 1.0f, 0.0f, static_cast<float>(GRAINS_IN_TRAJECTORY - 1))) * GRAIN_LENGTH;
         loopingGrainEndIdx = loopingGrainStartIdx + GRAIN_LENGTH;
     }
     if(address == "/osc_from_js_is_looping"){
@@ -295,6 +323,103 @@ void MainComponent::oscMessageReceived (const juce::OSCMessage& message){
         } else {
             generatedIdx = -1;
         }
+    }
+    if(address == "/osc_from_js_clear_recording_buffer"){
+        recordingBuffer.clear();
+        oscCounter = 0;
+        recordingLabel->setVisible(true);
+        repaint();
+    }
+    int messageSize = 100;
+    if(address == "/osc_from_js_left_channel_data"){
+        oscCounter++;
+        int bufferIdx = message[0].getInt32();
+        recordingBuffer.clear(0, bufferIdx, messageSize);
+        for(int i = 1; i < message.size(); i++){
+            recordingBuffer.addSample(0, bufferIdx++, message[i].getFloat32());
+        }
+    }
+    if(address == "/osc_from_js_right_channel_data"){
+        oscCounter++;
+        int bufferIdx = message[0].getInt32();
+        recordingBuffer.clear(1, bufferIdx, messageSize);
+        for(int i = 1; i < message.size(); i++){
+            recordingBuffer.addSample(1, bufferIdx++, message[i].getFloat32());
+        }
+    }
+    if(address == "/osc_from_js_audio_transmission_done"){
+        fprintf(stdout, "OSC done, floats received: %i / in percent: %f", oscCounter * messageSize, (static_cast<float>(oscCounter * messageSize) / (2.0f * 74496.0f)));
+        fprintf(stdout, "\n");
+        // Hide label
+        recordingLabel->setVisible(isRecording);
+        repaint();
+
+        // Normalise buffer
+        float newMaximum = 0.99f;
+        int numSamples = recordingBuffer.getNumSamples() - 1;
+        float maxL = findMaximum(recordingBuffer.getReadPointer(0, numSamples), numSamples);
+        float normaliseFactor = newMaximum / maxL;
+        recordingBuffer.applyGain(normaliseFactor);
+
+        // Generate new grain trajectory from recorded audio
+        auto gen = traverser->generateTrajectoryFromAudio(recordingBuffer);
+        // Audio
+        generated = get<0>(gen);
+        // Grain data
+        generatedGrains = get<1>(gen);
+
+        primeTrajectory();
+    }
+    if(address == "/osc_from_js_play"){
+        generatedIdx = 0;
+    }
+    if(address == "/osc_from_js_agent_feedback"){
+        // -1 for negative, 1 for positive
+        int feedback = message[0].getInt32();
+        // Apply feedback
+        OSCMessage* msgOut = new OSCMessage("/reward");
+        msgOut->addInt32(feedback);
+        sender.send(*msgOut);
+    }
+    if(address == "/osc_from_js_agent_zone_feedback"){
+        // Apply zone feedback
+        OSCMessage* msgOut = new OSCMessage("/super_like");
+        msgOut->addInt32(message[0].getInt32());
+        sender.send(*msgOut);
+    }
+    if(address == "/osc_from_js_pause_agent"){
+        isAgentPaused = message[0].getInt32() == 1;
+        isAgentRunningLabel->setVisible(!isAgentPaused);
+        repaint();
+
+        // Pause/unpause RL agent
+        OSCMessage* msgOut = new OSCMessage("/pause");
+        msgOut->addInt32(message[0].getInt32());
+        sender.send(*msgOut);
+
+        if(!isAgentPaused) {
+            generatedIdx = 0;
+        }
+    }
+    if(address == "/osc_from_js_record_in_JUCE"){
+        // Start recording
+        isRecording = true;
+        recordingLabel->setVisible(isRecording);
+        repaint();
+        recordingBuffer.clear();
+        recordingIdx = 0;
+    }
+    if(address == "/osc_from_js_explore"){
+        // Change zone
+        OSCMessage* msgOut = new OSCMessage("/explore_state");
+        msgOut->addInt32(1);
+        sender.send(*msgOut);
+        isExploringLabel->setVisible(true);
+        repaint();
+    }
+    if(address == "/explore_state_done"){
+        isExploringLabel->setVisible(false);
+        repaint();
     }
 }
 
@@ -332,6 +457,8 @@ bool MainComponent::keyPressed(const KeyPress &key, Component *originatingCompon
         OSCMessage* message = new OSCMessage("/explore_state");
         message->addInt32(1);
         sender.send(*message);
+        isExploringLabel->setVisible(true);
+        repaint();
     }
     if(key.getTextCharacter() == 'r'){
         // Start recording
@@ -347,18 +474,7 @@ bool MainComponent::keyPressed(const KeyPress &key, Component *originatingCompon
         recordingIdx = 0;
     }
     if(key.getTextCharacter() == 't'){
-        // Create grains from recording and send to RL agent
-        OSCMessage* message = new OSCMessage("/prime_trajectory");
-
-        // Convert recording buffer to grains
-        vector<float> data = traverser->convertAudioBufferToRLFormat(recordingBuffer);
-
-        // Each attribute of each grain is one message argument
-        for(auto& entry : data){
-            message->addFloat32(entry);
-        }
-
-        sender.send(*message);
+        primeTrajectory();
     }
     if(key.getTextCharacter() == '.'){
         // Pause/unpause agent
@@ -380,5 +496,30 @@ void MainComponent::showConnectionErrorMessage (const juce::String& messageText)
 void MainComponent::handleAsyncUpdate(){
     recordingLabel->setVisible(isRecording);
     repaint();
+
+    // Generate trajectory from audio
+    auto gen = traverser->generateTrajectoryFromAudio(recordingBuffer);
+    // Audio
+    generated = get<0>(gen);
+    // Grain data
+    generatedGrains = get<1>(gen);
+
+    // Send to RL
+    primeTrajectory();
+}
+
+void MainComponent::primeTrajectory() {
+    // Create grains from recording and send to RL agent
+    OSCMessage* message = new OSCMessage("/prime_trajectory");
+
+    // Convert recording buffer to grains
+    vector<float> data = traverser->convertAudioBufferToRLFormat(recordingBuffer);
+
+    // Each attribute of each grain is one message argument
+    for(auto& entry : data){
+        message->addFloat32(entry);
+    }
+
+    sender.send(*message);
 }
 
