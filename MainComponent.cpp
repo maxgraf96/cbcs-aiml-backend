@@ -2,6 +2,15 @@
 
 //==============================================================================
 MainComponent::MainComponent()
+: audioSetupComp (deviceManager,
+ 0,     // minimum input channels
+ 256,   // maximum input channels
+ 0,     // minimum output channels
+ 256,   // maximum output channels
+ false, // ability to select midi inputs
+ false, // ability to select midi output device
+ false, // treat channels as stereo pairs
+ false) // hide advanced options
 {
     // Make sure you set the size of the component after
     // you add any child components.
@@ -57,12 +66,17 @@ MainComponent::MainComponent()
     addKeyListener(this);
 
     generated = AudioBuffer<float>(2, GRAIN_LENGTH * GRAINS_IN_TRAJECTORY);
+    generatedIdx = -1;
+    recordingIdx = -1;
+
+    setupDiagnosticsAndDeviceManager();
 }
 
 MainComponent::~MainComponent()
 {
     essentia::shutdown();
 
+    deviceManager.removeChangeListener (this);
     // This shuts down the audio device and clears the audio source.
     shutdownAudio();
 }
@@ -106,18 +120,21 @@ void MainComponent::prepareToPlay (int samplesPerBlockExpected, double sampleRat
 
 void MainComponent::getNextAudioBlock (const juce::AudioSourceChannelInfo& bufferToFill)
 {
+
     int numSamples = bufferToFill.buffer->getNumSamples();
+    int genIdx = generatedIdx;
     // Your audio-processing code goes here!
     // Normal, linear playbaack of trajectory
-    if(!isLooping && isAgentPaused && generatedIdx > -1){
-        bufferToFill.buffer->clear(0, numSamples);
-        bufferToFill.buffer->addFrom(0, 0, generated, 0, generatedIdx, numSamples);
-        bufferToFill.buffer->addFrom(1, 0, generated, 1, generatedIdx, numSamples);
-        generatedIdx += numSamples;
-
-        if(generatedIdx >= generated.getNumSamples()){
-            generatedIdx = -1;
+    if(!isLooping && isAgentPaused && genIdx > -1){
+        if(genIdx + numSamples > generated.getNumSamples()){
+            generatedIdx = genIdx = -1;
+            return;
         }
+        bufferToFill.buffer->clear(0, numSamples);
+        bufferToFill.buffer->addFrom(0, 0, generated, 0, genIdx, numSamples);
+        bufferToFill.buffer->addFrom(1, 0, generated, 1, genIdx, numSamples);
+        generatedIdx += numSamples;
+        return;
     }
 
     else if(isRecording){
@@ -140,37 +157,41 @@ void MainComponent::getNextAudioBlock (const juce::AudioSourceChannelInfo& buffe
 
         // Disable feedback
         bufferToFill.buffer->clear();
+        return;
     }
 
     else if(!isRecording && recordingIdx > -1){
+        if(recordingIdx + numSamples >= recordingBuffer.getNumSamples()){
+            recordingIdx = -1;
+            return;
+        }
         bufferToFill.buffer->clear(0, numSamples);
         bufferToFill.buffer->addFrom(0, 0, recordingBuffer, 0, recordingIdx, numSamples);
         bufferToFill.buffer->addFrom(1, 0, recordingBuffer, 1, recordingIdx, numSamples);
         recordingIdx += numSamples;
 
-        if(recordingIdx >= recordingBuffer.getNumSamples()){
-            recordingIdx = -1;
-        }
+        return;
     }
 
     else if(isLooping){
-        if(generatedIdx >= loopingGrainEndIdx){
-            generatedIdx = loopingGrainStartIdx;
+        if(genIdx >= loopingGrainEndIdx){
+            generatedIdx = genIdx = loopingGrainStartIdx;
         }
         bufferToFill.buffer->clear(0, numSamples);
-        bufferToFill.buffer->addFrom(0, 0, generated, 0, generatedIdx, numSamples);
-        bufferToFill.buffer->addFrom(1, 0, generated, 1, generatedIdx, numSamples);
+        bufferToFill.buffer->addFrom(0, 0, generated, 0, genIdx, numSamples);
+        bufferToFill.buffer->addFrom(1, 0, generated, 1, genIdx, numSamples);
         generatedIdx += numSamples;
-    } else if (!isAgentPaused){
+        return;
+    } else if (!isAgentPaused || isGeneratedLooping){
         // Loop generated
-        bufferToFill.buffer->clear(0, numSamples);
-        bufferToFill.buffer->addFrom(0, 0, generated, 0, generatedIdx, numSamples);
-        bufferToFill.buffer->addFrom(1, 0, generated, 1, generatedIdx, numSamples);
-        generatedIdx += numSamples;
-
-        if(generatedIdx >= generated.getNumSamples()){
-            generatedIdx = 0;
+        if(genIdx + numSamples > generated.getNumSamples()){
+            generatedIdx = genIdx = 0;
         }
+        bufferToFill.buffer->clear(0, numSamples);
+        bufferToFill.buffer->addFrom(0, 0, generated, 0, genIdx, numSamples);
+        bufferToFill.buffer->addFrom(1, 0, generated, 1, genIdx, numSamples);
+        generatedIdx += numSamples;
+        return;
     }
 
     else {
@@ -201,6 +222,15 @@ void MainComponent::resized()
     // This is called when the MainContentComponent is resized.
     // If you add any child components, this is where you should
     // update their positions.
+
+    auto rect = getLocalBounds();
+    audioSetupComp.setBounds (rect.removeFromLeft (proportionOfWidth (0.6f)));
+    rect.reduce (10, 10);
+
+    auto topLine (rect.removeFromTop (20));
+    rect.removeFromTop (20);
+
+    diagnosticsBox.setBounds (rect);
 }
 
 void MainComponent::initialiseGUI(){
@@ -305,6 +335,9 @@ void MainComponent::oscMessageReceived (const juce::OSCMessage& message){
         generatedGrains = get<1>(gen);
 
         fprintf(stdout, "New trajectory from RL params created.\n");
+
+        OSCMessage* msgOut = new OSCMessage("/juce_ready_for_next");
+        sender.send(*msgOut);
     }
 
     if(address == "/osc_from_js"){
@@ -355,11 +388,11 @@ void MainComponent::oscMessageReceived (const juce::OSCMessage& message){
         repaint();
 
         // Normalise buffer
-        float newMaximum = 0.99f;
-        int numSamples = recordingBuffer.getNumSamples() - 1;
-        float maxL = findMaximum(recordingBuffer.getReadPointer(0, numSamples), numSamples);
-        float normaliseFactor = newMaximum / maxL;
-        recordingBuffer.applyGain(normaliseFactor);
+//        float newMaximum = 0.99f;
+//        int numSamples = recordingBuffer.getNumSamples() - 1;
+//        float maxL = findMaximum(recordingBuffer.getReadPointer(0, numSamples), numSamples);
+//        float normaliseFactor = newMaximum / maxL;
+//        recordingBuffer.applyGain(normaliseFactor);
 
         // Generate new grain trajectory from recorded audio
         auto gen = traverser->generateTrajectoryFromAudio(recordingBuffer);
@@ -399,6 +432,8 @@ void MainComponent::oscMessageReceived (const juce::OSCMessage& message){
 
         if(!isAgentPaused) {
             generatedIdx = 0;
+        } else {
+            generatedIdx = -1;
         }
     }
     if(address == "/osc_from_js_record_in_JUCE"){
@@ -481,6 +516,40 @@ bool MainComponent::keyPressed(const KeyPress &key, Component *originatingCompon
         isAgentPaused = !isAgentPaused;
         OSCMessage* message = new OSCMessage("/pause", isAgentPaused);
         sender.send(*message);
+
+        isGeneratedLooping = false;
+
+        // Start playback
+        if(!isAgentPaused) {
+            generatedIdx = 0;
+        } else {
+            generatedIdx = -1;
+        }
+
+        isAgentRunningLabel->setVisible(!isAgentPaused);
+        repaint();
+    }
+    if(key.getTextCharacter() == 'l'){
+        // Loop generated
+        isGeneratedLooping = !isGeneratedLooping;
+        if(isGeneratedLooping){
+            generatedIdx = 0;
+        } else {
+            generatedIdx = -1;
+        }
+    }
+    if(key.getKeyCode() == juce::KeyPress::backspaceKey){
+        OSCMessage* message = new OSCMessage("/restart_script");
+        sender.send(*message);
+
+        // Stop playing
+        generatedIdx = -1;
+    }
+    if(key.getTextCharacter() == 'h'){
+        isManagerVisible = !isManagerVisible;
+        audioSetupComp.setVisible(isManagerVisible);
+        diagnosticsBox.setVisible(isManagerVisible);
+        repaint();
     }
     return true;
 }
@@ -523,3 +592,55 @@ void MainComponent::primeTrajectory() {
     sender.send(*message);
 }
 
+void MainComponent::setupDiagnosticsAndDeviceManager(){
+    addAndMakeVisible (audioSetupComp);
+    addAndMakeVisible (diagnosticsBox);
+
+    audioSetupComp.setVisible(false);
+    diagnosticsBox.setVisible(false);
+
+    diagnosticsBox.setMultiLine (true);
+    diagnosticsBox.setReturnKeyStartsNewLine (true);
+    diagnosticsBox.setReadOnly (true);
+    diagnosticsBox.setScrollbarsShown (true);
+    diagnosticsBox.setCaretVisible (false);
+    diagnosticsBox.setPopupMenuEnabled (true);
+    diagnosticsBox.setColour (juce::TextEditor::backgroundColourId, juce::Colour (0x32ffffff));
+    diagnosticsBox.setColour (juce::TextEditor::outlineColourId,    juce::Colour (0x1c000000));
+    diagnosticsBox.setColour (juce::TextEditor::shadowColourId,     juce::Colour (0x16000000));
+
+    setAudioChannels (2, 2);
+    deviceManager.addChangeListener (this);
+}
+
+void MainComponent::dumpDeviceInfo()
+{
+    logMessage ("--------------------------------------");
+    logMessage ("Current audio device type: " + (deviceManager.getCurrentDeviceTypeObject() != nullptr
+                                                 ? deviceManager.getCurrentDeviceTypeObject()->getTypeName()
+                                                 : "<none>"));
+
+    if (auto* device = deviceManager.getCurrentAudioDevice())
+    {
+        logMessage ("Current audio device: "   + device->getName().quoted());
+        logMessage ("Sample rate: "    + juce::String (device->getCurrentSampleRate()) + " Hz");
+        logMessage ("Block size: "     + juce::String (device->getCurrentBufferSizeSamples()) + " samples");
+        logMessage ("Bit depth: "      + juce::String (device->getCurrentBitDepth()));
+        logMessage ("Input channel names: "    + device->getInputChannelNames().joinIntoString (", "));
+        logMessage ("Output channel names: "   + device->getOutputChannelNames().joinIntoString (", "));
+    }
+    else
+    {
+        logMessage ("No audio device open");
+    }
+}
+
+void MainComponent::logMessage (const juce::String& m)
+{
+    diagnosticsBox.moveCaretToEnd();
+    diagnosticsBox.insertTextAtCaret (m + juce::newLine);
+}
+
+void MainComponent::changeListenerCallback (juce::ChangeBroadcaster*){
+    dumpDeviceInfo();
+}

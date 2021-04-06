@@ -7,6 +7,7 @@
 
 #include <cstdio>
 #include <vector>
+#include <random>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_audio_utils/juce_audio_utils.h>
 #include "sqlite3.h"
@@ -44,7 +45,9 @@ private:
     bool init();
 
     Grain findBestGrain(Grain& src, vector<Grain>& grains) const;
-    tuple<AudioBuffer<float>, vector<Grain>> generateTargetGrains();
+    float normaliseValue(float in, float ref) const;
+    void generateTargetGrains(float margin, int tries);
+    tuple<AudioBuffer<float>, vector<Grain>> generateTargetGrainsAndCreateBuffer();
 
     float minLoudness = 0.0f;
     float maxLoudness = 0.0f;

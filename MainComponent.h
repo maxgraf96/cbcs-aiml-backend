@@ -31,6 +31,7 @@ using namespace essentia::standard;
 */
 class MainComponent  :
         public juce::AudioAppComponent,
+        public juce::ChangeListener,
         public juce::Button::Listener,
         public AsyncUpdater,
         private OSCReceiver,
@@ -65,11 +66,14 @@ private:
 
     AudioBuffer<float> generated;
     vector<Grain> generatedGrains;
-    int generatedIdx = -1;
-    // Flag for checking if we're currently looping via the OSC interface
+    atomic<int> generatedIdx;
+    // Flag for checking if we're currently looping (i.e. playing with the little ball thingimajic) via the OSC interface
     bool isLooping = false;
     int loopingGrainStartIdx = -1;
     int loopingGrainEndIdx = -1;
+    // Flag for checking whether generated buffer is currently looping
+    // This is the mainly for listening to created loops
+    bool isGeneratedLooping = false;
 
     // GUI
     unique_ptr<TextButton> playButton;
@@ -98,8 +102,17 @@ private:
 
     // Recording audio
     AudioBuffer<float> recordingBuffer;
-    int recordingIdx = -1;
+    atomic<int> recordingIdx;
     bool isRecording = false;
+
+    // Audio device manager
+    bool isManagerVisible = false;
+    AudioDeviceSelectorComponent audioSetupComp;
+    void setupDiagnosticsAndDeviceManager();
+    void logMessage(const String& m);
+    void dumpDeviceInfo();
+    juce::TextEditor diagnosticsBox;
+    void changeListenerCallback(ChangeBroadcaster*) override;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainComponent)
 };

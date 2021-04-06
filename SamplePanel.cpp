@@ -24,7 +24,7 @@ SamplePanel::SamplePanel(Analyser& analyser, Traverser& traverser) : analyser(an
     );
 
     // Set default location
-    File* defaultLocation = new File("/Users/max/Music/Ableton/Mixes/dmlap");
+    File* defaultLocation = new File("/Users/max/Music/Ableton/Samples");
     filenameComponent->setDefaultBrowseTarget(*defaultLocation);
 
     // Add file picker component to UI
@@ -48,6 +48,8 @@ SamplePanel::SamplePanel(Analyser& analyser, Traverser& traverser) : analyser(an
     if(traverser.isMinMaxInitialised()){
         fileLoadedState = dbLoaded;
     }
+
+    dirChooser = make_unique<FileChooser>("Select directories", *defaultLocation, "*.wav", true);
 
     // Set component size
     setSize(1024, 200);
@@ -117,16 +119,14 @@ void SamplePanel::loadFile(const File& file) {
     if(file.isDirectory()){
         Array<File> wavs = file.findChildFiles(File::TypesOfFileToFind::findFiles, true, "*.wav");
         int counter = 1;
+        juce::Logger::outputDebugString("Loading directory " + file.getFullPathName() + " with " + to_string(wavs.size()) + " files.");
         for(File& wav : wavs){
-            juce::Logger::outputDebugString("Loading file " + to_string(counter++) + " of " + to_string(wavs.size()));
+            juce::Logger::outputDebugString("   Loading file " + to_string(counter++) + " of " + to_string(wavs.size()));
             loadSingleFile(wav);
         }
 
         // Set file loaded state
         fileLoadedState = loaded;
-
-        // Calculate feature statistics
-        traverser.calculateFeatureStatistics();
 
     }
     else if (fileExtension == ".wav" || fileExtension == ".WAV") {
@@ -135,9 +135,6 @@ void SamplePanel::loadFile(const File& file) {
 
         // Set file loaded state
         fileLoadedState = loaded;
-
-        // Calculate feature statistics
-        traverser.calculateFeatureStatistics();
     }
     else {
         // Reset file component
@@ -200,4 +197,21 @@ void SamplePanel::filenameComponentChanged(FilenameComponent* fileComponentThatH
 void SamplePanel::setCurrentFilePath(String& path)
 {
     currentFilePath.setValue(path);
+}
+
+void SamplePanel::mouseDown (const MouseEvent& event) {
+    if (dirChooser->browseForMultipleFilesOrDirectories())
+    {
+        Array<File> files = dirChooser->getResults();
+        juce::Logger::outputDebugString("Loading " + to_string(files.size()) + " files/directories...");
+        int counter = 1;
+        for(const auto& file : files){
+            juce::Logger::outputDebugString(to_string(counter++) + " / " + to_string(files.size()));
+            loadFile(file);
+        }
+        juce::Logger::outputDebugString("Done loading.");
+
+        // Calculate feature statistics
+        traverser.calculateFeatureStatistics();
+    }
 }

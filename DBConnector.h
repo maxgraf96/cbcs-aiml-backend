@@ -9,6 +9,7 @@
 #include <set>
 #include "sqlite3.h"
 #include "Grain.h"
+#include "Constants.h"
 
 
 class DBConnector {
@@ -18,6 +19,7 @@ public:
 
     void insertGrains(vector<Grain>& grains);
     vector<Grain> queryClosestGrain(Grain& grain, float margin);
+    vector<Grain> queryRandomTrajectory();
     float queryMax(const string& field);
     float queryMin(const string& field);
     float queryMean(const string& field);
@@ -28,6 +30,7 @@ public:
 private:
     // SQLite Database
     sqlite3 *db;
+    sqlite3 *dbDisk;
     string DB_PATH = "/Users/max/Desktop/test.db";
 };
 

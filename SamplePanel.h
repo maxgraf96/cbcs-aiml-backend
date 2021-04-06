@@ -44,6 +44,9 @@ private:
     enum FileLoadedState { notLoaded, loading, loaded, rejected, dbLoaded };
     FileLoadedState fileLoadedState;
 
+    unique_ptr<FileChooser> dirChooser;
+    void mouseDown (const MouseEvent& event) override;
+
     AudioFormatManager formatManager;
 
     // Component for loading files

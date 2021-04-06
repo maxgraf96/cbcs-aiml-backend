@@ -18,6 +18,7 @@ tuple<AudioBuffer<float>, vector<Grain>> Traverser::generateTrajectoryFromParams
     if(!init()){
         return make_tuple(AudioBuffer<float>(0, 0), vector<Grain>());
     }
+    source.clear();
     // Create source from RL parameters
     // Define length of trajectory
     for(int i = 0; i < params.size(); i += NUM_FEATURES){
@@ -32,7 +33,7 @@ tuple<AudioBuffer<float>, vector<Grain>> Traverser::generateTrajectoryFromParams
         source.emplace_back(*grain);
     }
 
-    return generateTargetGrains();
+    return generateTargetGrainsAndCreateBuffer();
 }
 
 tuple<AudioBuffer<float>, vector<Grain>> Traverser::generateTrajectoryFromAudio(AudioBuffer<float>& input) {
@@ -42,25 +43,30 @@ tuple<AudioBuffer<float>, vector<Grain>> Traverser::generateTrajectoryFromAudio(
 
     // Create source from input audio
     source = analyser.audioBufferToGrains(input);
-    return generateTargetGrains();
+    return generateTargetGrainsAndCreateBuffer();
 }
 
 Grain Traverser::findBestGrain(Grain& src, vector<Grain>& grains) const {
     float wLoudness = 1.0f;
-    float wSC = 0.1f;
+    float wSC = 2.0f;
     float wSF = 1.0f;
-    float wPitch = 0.1f;
+    float wPitch = 3.0f;
 
     Grain bestMatch;
     vector<float> distances;
     for(Grain& candidate : grains){
         float distance = 0.0f;
-        distance += (powf((candidate.getLoudness() - src.getLoudness()), 2) / stdLoudness) * wLoudness;
-        distance += (powf((candidate.getSpectralCentroid() - src.getSpectralCentroid()), 2) / stdSC) * wSC;
-        distance += (powf((candidate.getSpectralFlux() - src.getSpectralFlux()), 2) / stdSF) * wSF;
-        distance += (powf((candidate.getPitch() - src.getPitch()), 2) / stdPitch) * wPitch;
+        // Normalise values
+        float distLoudness = powf((normaliseValue(candidate.getLoudness(), maxLoudness) - normaliseValue(src.getLoudness(), maxLoudness)), 2) * wLoudness;
+        float distSC = powf((normaliseValue(candidate.getSpectralCentroid(), maxSC) - normaliseValue(src.getSpectralCentroid(), maxSC)), 2) * wSC;
+        float distSF = powf((normaliseValue(candidate.getSpectralFlux(), maxSF) - normaliseValue(src.getSpectralFlux(), maxSF)), 2) * wSF;
+        float distPitch = powf((normaliseValue(candidate.getPitch(), maxPitch) - normaliseValue(src.getPitch(), maxPitch)), 2) * wPitch;
 
-        distances.emplace_back(distance * 100.0f);
+        distance = distLoudness + distSC + distSF + distPitch;
+        distances.emplace_back(distance);
+    }
+    if(distances.size() == 0){
+        fprintf(stdout, "No grains found...");
     }
     // Find index of min distance
     int minElementIdx = min_element(distances.begin(), distances.end()) - distances.begin();
@@ -75,24 +81,14 @@ tuple<AudioBuffer<float>, vector<Grain>> Traverser::generateRandomTrajectory(int
         return make_tuple(AudioBuffer<float>(0, 0), vector<Grain>());
     }
 
-    // Create random source
-    for(int i = 0; i < lengthInGrains; i++){
-        // Generate random values in range for each field
-        float rLoudness = minLoudness + static_cast <float> (rand()) /( static_cast <float> (RAND_MAX/(maxLoudness-minLoudness)));
-        float rSC = minSC + static_cast <float> (rand()) /( static_cast <float> (RAND_MAX/(maxSC-minSC)));
-        float rSF = minSF + static_cast <float> (rand()) / ( static_cast <float> (RAND_MAX / (maxSF - minSF)));
-        float rPitch = minPitch + static_cast <float> (rand()) / ( static_cast <float> (RAND_MAX / (maxPitch - minPitch)));
+    source = dbConnector.queryRandomTrajectory();
 
-        Grain* grain = new Grain(rLoudness, rSC, rSF, rPitch);
-        source.emplace_back(*grain);
-    }
-
-    return generateTargetGrains();
+    return generateTargetGrainsAndCreateBuffer();
 }
 
-tuple<AudioBuffer<float>, vector<Grain>> Traverser::generateTargetGrains(){
-    // Find target grains from database
-    float margin = 100;
+void Traverser::generateTargetGrains(float margin, int tries){
+    target.clear();
+
     for(Grain& sourceGrain : source){
         vector<Grain> found = dbConnector.queryClosestGrain(sourceGrain, margin);
         Grain bestMatch;
@@ -101,9 +97,22 @@ tuple<AudioBuffer<float>, vector<Grain>> Traverser::generateTargetGrains(){
             // Calculate best grain based on weighted euclidean distance
             bestMatch = findBestGrain(sourceGrain, found);
         }
+//        else if(found.empty() && tries < 5) {
+//            float newMargin = margin + 500.0f;
+//            fprintf(stdout, "No target grain found... Trying with margin %f \n", newMargin);
+//            target.clear();
+//            generateTargetGrains(newMargin, tries + 1);
+//            return;
+//        }
 
         target.emplace_back(bestMatch);
     }
+}
+tuple<AudioBuffer<float>, vector<Grain>> Traverser::generateTargetGrainsAndCreateBuffer(){
+    // Find target grains from database
+    float margin = 100;
+
+    generateTargetGrains(margin, 0);
 
     // Get sound data
     int channels = 2;
@@ -190,4 +199,8 @@ vector<float> Traverser::convertAudioBufferToRLFormat(AudioBuffer<float> &buffer
     }
 
     return data;
+}
+
+float Traverser::normaliseValue(float in, float ref) const {
+    return in / ref;
 }

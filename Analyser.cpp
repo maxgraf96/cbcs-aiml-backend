@@ -69,11 +69,11 @@ vector<Grain> Analyser::audioBufferToGrains(AudioBuffer<float>& buffer){
 
 bool Analyser::computeFeatures(){
     // Essentia algorithms compute routines
-    aRMS->compute();
+//    aRMS->compute();
     // Skip the grain if silent
-    if(eRMS < 0.01f){
-        return false;
-    }
+//    if(eRMS < 0.01f){
+//        return false;
+//    }
     aWindowing->compute();
     aSpectrum->compute();
     aSpectralCentroid->compute();
