@@ -65,16 +65,14 @@ MainComponent::MainComponent()
     // Add keyboard listener
     addKeyListener(this);
 
-    generated = AudioBuffer<float>(2, GRAIN_LENGTH * GRAINS_IN_TRAJECTORY);
-    generatedIdx = -1;
-    recordingIdx = -1;
-
     setupDiagnosticsAndDeviceManager();
+    LookAndFeel::getDefaultLookAndFeel().setDefaultSansSerifTypefaceName ("Arial");
 }
 
 MainComponent::~MainComponent()
 {
     essentia::shutdown();
+    sender.disconnect();
 
     deviceManager.removeChangeListener (this);
     // This shuts down the audio device and clears the audio source.
@@ -98,6 +96,20 @@ void MainComponent::prepareToPlay (int samplesPerBlockExpected, double sampleRat
         essentia::init();
     }
 
+    if (generatedBuffer == nullptr){
+        generatedBuffer = make_unique<AudioBuffer<float>>(2, GRAIN_LENGTH * GRAINS_IN_TRAJECTORY);
+        generatedBuffer->clear();
+    }
+    generatedIdx = -1;
+    recordingIdx = -1;
+    canSetGeneratedIdx = true;
+
+    if(recordingBuffer == nullptr)
+    {
+        recordingBuffer = make_unique<AudioBuffer<float>>(2, GRAINS_IN_TRAJECTORY * GRAIN_LENGTH);
+        recordingBuffer->clear();
+    }
+
     // Initialise components
     if (analyser == nullptr){
         // Initialise DB connector
@@ -105,7 +117,7 @@ void MainComponent::prepareToPlay (int samplesPerBlockExpected, double sampleRat
         analyser = make_unique<Analyser>(*dbConnector);
 
         // Initialise traverser
-        traverser = make_unique<Traverser>(*dbConnector, *analyser);
+        traverser = make_unique<Traverser>(*dbConnector, *analyser, *generatedBuffer, generatedGrains);
 
         samplePanel = make_unique<SamplePanel>(*analyser, *traverser);
         addAndMakeVisible(*samplePanel);
@@ -113,35 +125,33 @@ void MainComponent::prepareToPlay (int samplesPerBlockExpected, double sampleRat
         initialiseGUI();
     }
     analyser->initialise(sampleRate, samplesPerBlockExpected);
-
-    recordingBuffer.setSize(2, GRAINS_IN_TRAJECTORY * GRAIN_LENGTH);
-    recordingBuffer.clear();
 }
 
 void MainComponent::getNextAudioBlock (const juce::AudioSourceChannelInfo& bufferToFill)
 {
-
+    canSetGeneratedIdx = false;
     int numSamples = bufferToFill.buffer->getNumSamples();
     int genIdx = generatedIdx;
-    // Your audio-processing code goes here!
-    // Normal, linear playbaack of trajectory
-    if(!isLooping && isAgentPaused && genIdx > -1){
-        if(genIdx + numSamples > generated.getNumSamples()){
+    // Normal, linear, one-time playback of trajectory
+    if(!isLooping && !isGeneratedLooping && isAgentPaused && genIdx > -1){
+        if(genIdx + numSamples > generatedBuffer->getNumSamples()){
             generatedIdx = genIdx = -1;
+            triggerAsyncUpdate();
             return;
         }
         bufferToFill.buffer->clear(0, numSamples);
-        bufferToFill.buffer->addFrom(0, 0, generated, 0, genIdx, numSamples);
-        bufferToFill.buffer->addFrom(1, 0, generated, 1, genIdx, numSamples);
+        bufferToFill.buffer->addFrom(0, 0, *generatedBuffer, 0, genIdx, numSamples);
+        bufferToFill.buffer->addFrom(1, 0, *generatedBuffer, 1, genIdx, numSamples);
         generatedIdx += numSamples;
         return;
     }
 
     else if(isRecording){
         // Audio input for recording
-        if(recordingIdx + numSamples > recordingBuffer.getNumSamples()){
+        if(recordingIdx + numSamples > recordingBuffer->getNumSamples()){
             isRecording = false;
             recordingIdx = -1;
+            shouldPrimeTrajectory = true;
             triggerAsyncUpdate();
             return;
         }
@@ -149,9 +159,9 @@ void MainComponent::getNextAudioBlock (const juce::AudioSourceChannelInfo& buffe
         auto activeInputChannels  = device->getActiveInputChannels();
         auto activeOutputChannels = device->getActiveOutputChannels();
 
-        recordingBuffer.clear(recordingIdx, numSamples);
-        recordingBuffer.addFrom(0, recordingIdx, *bufferToFill.buffer, 0, 0, numSamples);
-        recordingBuffer.addFrom(1, recordingIdx, *bufferToFill.buffer, 1, 0, numSamples);
+        recordingBuffer->clear(recordingIdx, numSamples);
+        recordingBuffer->addFrom(0, recordingIdx, *bufferToFill.buffer, 0, 0, numSamples);
+        recordingBuffer->addFrom(1, recordingIdx, *bufferToFill.buffer, 1, 0, numSamples);
 
         recordingIdx += numSamples;
 
@@ -161,13 +171,13 @@ void MainComponent::getNextAudioBlock (const juce::AudioSourceChannelInfo& buffe
     }
 
     else if(!isRecording && recordingIdx > -1){
-        if(recordingIdx + numSamples >= recordingBuffer.getNumSamples()){
+        if(recordingIdx + numSamples >= recordingBuffer->getNumSamples()){
             recordingIdx = -1;
             return;
         }
         bufferToFill.buffer->clear(0, numSamples);
-        bufferToFill.buffer->addFrom(0, 0, recordingBuffer, 0, recordingIdx, numSamples);
-        bufferToFill.buffer->addFrom(1, 0, recordingBuffer, 1, recordingIdx, numSamples);
+        bufferToFill.buffer->addFrom(0, 0, *recordingBuffer, 0, recordingIdx, numSamples);
+        bufferToFill.buffer->addFrom(1, 0, *recordingBuffer, 1, recordingIdx, numSamples);
         recordingIdx += numSamples;
 
         return;
@@ -178,18 +188,18 @@ void MainComponent::getNextAudioBlock (const juce::AudioSourceChannelInfo& buffe
             generatedIdx = genIdx = loopingGrainStartIdx;
         }
         bufferToFill.buffer->clear(0, numSamples);
-        bufferToFill.buffer->addFrom(0, 0, generated, 0, genIdx, numSamples);
-        bufferToFill.buffer->addFrom(1, 0, generated, 1, genIdx, numSamples);
+        bufferToFill.buffer->addFrom(0, 0, *generatedBuffer, 0, genIdx, numSamples);
+        bufferToFill.buffer->addFrom(1, 0, *generatedBuffer, 1, genIdx, numSamples);
         generatedIdx += numSamples;
         return;
-    } else if (!isAgentPaused || isGeneratedLooping){
+    } else if (generatedIdx > -1 && (!isAgentPaused || isGeneratedLooping)){
         // Loop generated
-        if(genIdx + numSamples > generated.getNumSamples()){
+        if(genIdx + numSamples > generatedBuffer->getNumSamples()){
             generatedIdx = genIdx = 0;
         }
         bufferToFill.buffer->clear(0, numSamples);
-        bufferToFill.buffer->addFrom(0, 0, generated, 0, genIdx, numSamples);
-        bufferToFill.buffer->addFrom(1, 0, generated, 1, genIdx, numSamples);
+        bufferToFill.buffer->addFrom(0, 0, *generatedBuffer, 0, genIdx, numSamples);
+        bufferToFill.buffer->addFrom(1, 0, *generatedBuffer, 1, genIdx, numSamples);
         generatedIdx += numSamples;
         return;
     }
@@ -198,6 +208,7 @@ void MainComponent::getNextAudioBlock (const juce::AudioSourceChannelInfo& buffe
         // Disable feedback
         bufferToFill.buffer->clear();
     }
+    canSetGeneratedIdx = true;
 }
 
 void MainComponent::releaseResources()
@@ -211,10 +222,8 @@ void MainComponent::releaseResources()
 //==============================================================================
 void MainComponent::paint (juce::Graphics& g)
 {
-    // (Our component is opaque, so we must completely fill the background with a solid colour)
-    g.fillAll (getLookAndFeel().findColour (juce::ResizableWindow::backgroundColourId));
-
-    // You can add your drawing code here!
+    // Black background
+    g.fillAll (Colour::fromRGB(0, 0, 0));
 }
 
 void MainComponent::resized()
@@ -235,85 +244,178 @@ void MainComponent::resized()
 
 void MainComponent::initialiseGUI(){
     // Add buttons
+    int marginTop = samplePanel->getHeight();
+    int buttonHeight = 80;
+
+    // Record button
+    recordButton = make_unique<TextButton>("recordButton");
+    recordButton->setButtonText("Record");
+    recordButton->setBounds(0, marginTop, getWidth() / 2, buttonHeight);
+    recordButton->addListener(this);
+    recordButton->setLookAndFeel(&myLookAndFeel);
+    recordButton->setColour(TextButton::buttonColourId, recordButtonBackground);
+    addAndMakeVisible(*recordButton);
+
     // Play button
     playButton = make_unique<TextButton>("playButton");
     playButton->setButtonText("Play");
-    playButton->setBounds(24, 224, getWidth() - 24 * 2, 50);
+    playButton->setBounds(getWidth() / 2, marginTop, getWidth() / 2, buttonHeight);
     addAndMakeVisible(*playButton);
+    playButton->setLookAndFeel(&myLookAndFeel);
+    playButton->setColour(TextButton::buttonColourId, playButtonBackground);
     playButton->addListener(this);
 
     // Create initial random trajectory
     // Only execute if db is populated
     if(dbConnector->isPopulated()){
-        auto gen = traverser->generateRandomTrajectory(GRAINS_IN_TRAJECTORY);
-        // Audio
-        generated = get<0>(gen);
-        // Grain data
-        generatedGrains = get<1>(gen);
+        traverser->generateRandomTrajectory();
     }
-
-    // Yes button
-    yesButton = make_unique<TextButton>("yesButton");
-    yesButton->setButtonText("Yes");
-    yesButton->setBounds(24, 224 + 50 + 24, 100, 50);
-    addAndMakeVisible(*yesButton);
-    yesButton->addListener(this);
 
     // No button
     noButton = make_unique<TextButton>("noButton");
-    noButton->setButtonText("No");
-    noButton->setBounds(100 + 24 + 24, 224 + 50 + 24, 100, 50);
-    addAndMakeVisible(*noButton);
+    noButton->setButtonText("-");
+    noButton->setBounds(0, marginTop + buttonHeight, getWidth() / 2, buttonHeight);
     noButton->addListener(this);
+    noButton->setLookAndFeel(&myLookAndFeel);
+    noButton->setColour(TextButton::buttonColourId, feedbackButtonBackground);
+    addAndMakeVisible(*noButton);
+
+    // Yes button
+    yesButton = make_unique<TextButton>("yesButton");
+    yesButton->setButtonText("+");
+    yesButton->setBounds(getWidth() / 2, marginTop + buttonHeight, getWidth() / 2, buttonHeight);
+    yesButton->addListener(this);
+    yesButton->setLookAndFeel(&myLookAndFeel);
+    yesButton->setColour(TextButton::buttonColourId, feedbackButtonBackground);
+    addAndMakeVisible(*yesButton);
+
+    // Superdislike button
+    superdislikeButton = make_unique<TextButton>("superdislikeButton");
+    superdislikeButton->setButtonText(CharPointer_UTF8 ("\xe2\x96\xbc"));
+    superdislikeButton->setBounds(0, marginTop + buttonHeight * 2, getWidth() / 2, buttonHeight);
+    superdislikeButton->addListener(this);
+    superdislikeButton->setLookAndFeel(&myLookAndFeel);
+    superdislikeButton->setColour(TextButton::buttonColourId, feedbackButtonBackground);
+    addAndMakeVisible(*superdislikeButton);
+
+    superlikeButton = make_unique<TextButton>("superlikeButton");
+    superlikeButton->setButtonText(CharPointer_UTF8 ("\xe2\x96\xb2"));
+    superlikeButton->setBounds(getWidth() / 2, marginTop + buttonHeight * 2, getWidth() / 2, buttonHeight);
+    superlikeButton->addListener(this);
+    superlikeButton->setLookAndFeel(&myLookAndFeel);
+    superlikeButton->setColour(TextButton::buttonColourId, feedbackButtonBackground);
+    addAndMakeVisible(*superlikeButton);
+
+    // Run agent button
+    runAgentButton = make_unique<TextButton>("runAgentButton");
+    runAgentButton->setButtonText("Run agent");
+    runAgentButton->setBounds(0, marginTop + buttonHeight * 3, getWidth(), buttonHeight);
+    runAgentButton->addListener(this);
+    runAgentButton->setLookAndFeel(&myLookAndFeel);
+    runAgentButton->setColour(TextButton::buttonColourId, black);
+    addAndMakeVisible(*runAgentButton);
+
+    // Explore button
+    exploreButton = make_unique<TextButton>("exploreButton");
+    exploreButton->setButtonText("Explore");
+    exploreButton->setBounds(0, marginTop + buttonHeight * 4, getWidth(), buttonHeight);
+    exploreButton->addListener(this);
+    exploreButton->setLookAndFeel(&myLookAndFeel);
+    exploreButton->setColour(TextButton::buttonColourId, black);
+    addAndMakeVisible(*exploreButton);
 
     // Reset button
     resetButton = make_unique<TextButton>("resetButton");
     resetButton->setButtonText("Reset");
-    resetButton->setBounds(24, 224 + 50 + 50 + 24 + 24, 100, 50);
-    addAndMakeVisible(*resetButton);
+    resetButton->setBounds(0, getHeight() - buttonHeight, getWidth() / 4, buttonHeight);
     resetButton->addListener(this);
-
-    // Add labels
-    recordingLabel = make_unique<Label>("recordingLabel");
-    recordingLabel->setText("Recording / receiving...", dontSendNotification);
-    recordingLabel->setBounds(getWidth() - 124, getHeight() - 74, 100, 50);
-    addAndMakeVisible(*recordingLabel);
-    recordingLabel->setVisible(false);
-
-    isAgentRunningLabel = make_unique<Label>("agentRunningLabel");
-    isAgentRunningLabel->setText("Agent running...", dontSendNotification);
-    isAgentRunningLabel->setBounds(getWidth() - 124 * 2, getHeight() - 74, 100, 50);
-    addAndMakeVisible(*isAgentRunningLabel);
-    isAgentRunningLabel->setVisible(false);
-
-    isExploringLabel = make_unique<Label>("agentRunningLabel");
-    isExploringLabel->setText("Exploring...", dontSendNotification);
-    isExploringLabel->setBounds(getWidth() - 124, getHeight() - 74, 100, 50);
-    addAndMakeVisible(*isExploringLabel);
-    isExploringLabel->setVisible(false);
+    resetButton->setLookAndFeel(&myLookAndFeel);
+    resetButton->setColour(TextButton::buttonColourId, feedbackButtonBackground);
+    addAndMakeVisible(*resetButton);
 }
 
 void MainComponent::buttonClicked(juce::Button *button) {
+    if(button == recordButton.get()){
+        isRecording = true;
+        recordButton->setButtonText("Recording...");
+        repaint();
+        recordingBuffer->clear();
+        recordingIdx = 0;
+    }
     if(button == playButton.get()){
         // Reset generated buffer index -> plays the current trajectory
-        generatedIdx = 0;
-    }
-    if(button == yesButton.get()){
+        if(generatedIdx > 0){
+            generatedIdx = -1;
+            playButton->setButtonText("Play");
+        }
+        else {
+            generatedIdx = 0;
+            playButton->setButtonText("Stop");
+        }
 
+        if (isGeneratedLooping){
+            playButton->setButtonText("Play");
+            isGeneratedLooping = false;
+            generatedIdx = -1;
+        }
     }
     if(button == noButton.get()){
+        // Apply feedback
+        OSCMessage msgOut = OSCMessage("/reward");
+        msgOut.addInt32(-1);
+        sender.send(msgOut);
+    }
+    if(button == yesButton.get()){
+        OSCMessage msgOut = OSCMessage("/reward");
+        msgOut.addInt32(1);
+        sender.send(msgOut);
+    }
+    if(button == superdislikeButton.get()){
+        OSCMessage msgOut = OSCMessage("/super_like");
+        msgOut.addInt32(-1);
+        sender.send(msgOut);
+    }
+    if(button == superlikeButton.get()){
+        OSCMessage msgOut = OSCMessage("/super_like");
+        msgOut.addInt32(1);
+        sender.send(msgOut);
+    }
+    if(button == runAgentButton.get()){
+        isGeneratedLooping = false;
+        isAgentPaused = !isAgentPaused;
+        if(isAgentPaused){
+            runAgentButton->setColour(TextButton::buttonColourId, black);
+            runAgentButton->setButtonText("Run agent");
+            generatedIdx = -1;
+        } else {
+            runAgentButton->setColour(TextButton::buttonColourId, playButtonBackground);
+            runAgentButton->setButtonText("Agent running...");
+            while(!canSetGeneratedIdx){
+                std::this_thread::sleep_for(10ms);
+            }
+            generatedIdx = 0;
+        }
+        repaint();
 
+        // Pause/unpause RL agent
+        OSCMessage msgOut = OSCMessage("/pause");
+        msgOut.addInt32(isAgentPaused);
+        sender.send(msgOut);
+    }
+    if(button == exploreButton.get()){
+        OSCMessage msgOut = OSCMessage("/explore_state");
+        msgOut.addInt32(1);
+        sender.send(msgOut);
+
+        exploreButton->setButtonText("Exploring...");
+        repaint();
     }
     if(button == resetButton.get()){
-        // Create new random trajectory
-        auto gen = traverser->generateRandomTrajectory(GRAINS_IN_TRAJECTORY);
-        // Audio
-        generated = get<0>(gen);
-        // Grain data
-        generatedGrains = get<1>(gen);
+        OSCMessage message = OSCMessage("/restart_script");
+        sender.send(message);
 
-        // Reset generated buffer index -> plays the current trajectory
-        generatedIdx = 0;
+        // Stop playing
+        generatedIdx = -1;
     }
 }
 
@@ -326,18 +428,13 @@ void MainComponent::oscMessageReceived (const juce::OSCMessage& message){
         for(const auto & element : message){
             params.emplace_back(element.getFloat32());
         }
-
-        // Map list of raw parameters and generate new grain trajectory
-        auto gen = traverser->generateTrajectoryFromParams(params);
-        // Audio
-        generated = get<0>(gen);
-        // Grain data
-        generatedGrains = get<1>(gen);
+        // Generate new grain trajectory from RL parameters
+        traverser->generateTrajectoryFromParams(params);
 
         fprintf(stdout, "New trajectory from RL params created.\n");
-
-        OSCMessage* msgOut = new OSCMessage("/juce_ready_for_next");
-        sender.send(*msgOut);
+        // Notify RL agent that we are ready to receive the next trajectory
+        OSCMessage msgOut = OSCMessage("/juce_ready_for_next");
+        sender.send(msgOut);
     }
 
     if(address == "/osc_from_js"){
@@ -358,33 +455,31 @@ void MainComponent::oscMessageReceived (const juce::OSCMessage& message){
         }
     }
     if(address == "/osc_from_js_clear_recording_buffer"){
-        recordingBuffer.clear();
+        recordingBuffer->clear();
         oscCounter = 0;
-        recordingLabel->setVisible(true);
-        repaint();
     }
     int messageSize = 100;
     if(address == "/osc_from_js_left_channel_data"){
         oscCounter++;
         int bufferIdx = message[0].getInt32();
-        recordingBuffer.clear(0, bufferIdx, messageSize);
+        recordingBuffer->clear(0, bufferIdx, messageSize);
         for(int i = 1; i < message.size(); i++){
-            recordingBuffer.addSample(0, bufferIdx++, message[i].getFloat32());
+            recordingBuffer->addSample(0, bufferIdx++, message[i].getFloat32());
         }
     }
     if(address == "/osc_from_js_right_channel_data"){
         oscCounter++;
         int bufferIdx = message[0].getInt32();
-        recordingBuffer.clear(1, bufferIdx, messageSize);
+        recordingBuffer->clear(1, bufferIdx, messageSize);
         for(int i = 1; i < message.size(); i++){
-            recordingBuffer.addSample(1, bufferIdx++, message[i].getFloat32());
+            recordingBuffer->addSample(1, bufferIdx++, message[i].getFloat32());
         }
     }
     if(address == "/osc_from_js_audio_transmission_done"){
         fprintf(stdout, "OSC done, floats received: %i / in percent: %f", oscCounter * messageSize, (static_cast<float>(oscCounter * messageSize) / (2.0f * 74496.0f)));
         fprintf(stdout, "\n");
-        // Hide label
-        recordingLabel->setVisible(isRecording);
+        // Change button text back
+
         repaint();
 
         // Normalise buffer
@@ -395,114 +490,73 @@ void MainComponent::oscMessageReceived (const juce::OSCMessage& message){
 //        recordingBuffer.applyGain(normaliseFactor);
 
         // Generate new grain trajectory from recorded audio
-        auto gen = traverser->generateTrajectoryFromAudio(recordingBuffer);
-        // Audio
-        generated = get<0>(gen);
-        // Grain data
-        generatedGrains = get<1>(gen);
-
+        traverser->generateTrajectoryFromAudio(*recordingBuffer);
         primeTrajectory();
     }
     if(address == "/osc_from_js_play"){
-        generatedIdx = 0;
+        playButton->triggerClick();
     }
     if(address == "/osc_from_js_agent_feedback"){
         // -1 for negative, 1 for positive
         int feedback = message[0].getInt32();
-        // Apply feedback
-        OSCMessage* msgOut = new OSCMessage("/reward");
-        msgOut->addInt32(feedback);
-        sender.send(*msgOut);
+        if(feedback == -1){
+            noButton->triggerClick();
+        } else {
+            yesButton->triggerClick();
+        }
     }
     if(address == "/osc_from_js_agent_zone_feedback"){
         // Apply zone feedback
-        OSCMessage* msgOut = new OSCMessage("/super_like");
-        msgOut->addInt32(message[0].getInt32());
-        sender.send(*msgOut);
+        int feedback = message[0].getInt32();
+        if(feedback == -1){
+            superdislikeButton->triggerClick();
+        } else {
+            superlikeButton->triggerClick();
+        }
     }
     if(address == "/osc_from_js_pause_agent"){
-        isAgentPaused = message[0].getInt32() == 1;
-        isAgentRunningLabel->setVisible(!isAgentPaused);
-        repaint();
-
-        // Pause/unpause RL agent
-        OSCMessage* msgOut = new OSCMessage("/pause");
-        msgOut->addInt32(message[0].getInt32());
-        sender.send(*msgOut);
-
-        if(!isAgentPaused) {
-            generatedIdx = 0;
-        } else {
-            generatedIdx = -1;
-        }
+        runAgentButton->triggerClick();
     }
     if(address == "/osc_from_js_record_in_JUCE"){
         // Start recording
-        isRecording = true;
-        recordingLabel->setVisible(isRecording);
-        repaint();
-        recordingBuffer.clear();
-        recordingIdx = 0;
+        recordButton->triggerClick();
     }
     if(address == "/osc_from_js_explore"){
         // Change zone
-        OSCMessage* msgOut = new OSCMessage("/explore_state");
-        msgOut->addInt32(1);
-        sender.send(*msgOut);
-        isExploringLabel->setVisible(true);
-        repaint();
+        exploreButton->triggerClick();
     }
     if(address == "/explore_state_done"){
-        isExploringLabel->setVisible(false);
+        exploreButton->setButtonText("Explore");
         repaint();
     }
 }
 
 bool MainComponent::keyPressed(const KeyPress &key, Component *originatingComponent) {
-    if(key.getKeyCode() == key.spaceKey){
-        // Reset generated buffer index -> plays the current trajectory
-        generatedIdx = 0;
+    if(key.getKeyCode() == KeyPress::spaceKey){
+        playButton->triggerClick();
     }
     if(key.getTextCharacter() == 'a'){
         // Apply negative
-        OSCMessage* message = new OSCMessage("/reward");
-        message->addInt32(-1);
-        sender.send(*message);
+        noButton->triggerClick();
     }
     if(key.getTextCharacter() == 'd'){
         // Apply positive
-        OSCMessage* message = new OSCMessage("/reward");
-        message->addInt32(1);
-        sender.send(*message);
+        yesButton->triggerClick();
     }
     if(key.getTextCharacter() == 'w'){
         // Apply positive zone feedback
-        OSCMessage* message = new OSCMessage("/super_like");
-        message->addInt32(1);
-        sender.send(*message);
+        superlikeButton->triggerClick();
     }
     if(key.getTextCharacter() == 's'){
         // Apply negative zone feedback
-        OSCMessage* message = new OSCMessage("/super_like");
-        message->addInt32(-1);
-        sender.send(*message);
+        superdislikeButton->triggerClick();
     }
     if(key.getTextCharacter() == 'e'){
-        // Change zone
-        OSCMessage* message = new OSCMessage("/explore_state");
-        message->addInt32(1);
-        sender.send(*message);
-        isExploringLabel->setVisible(true);
-        repaint();
+        exploreButton->triggerClick();
     }
     if(key.getTextCharacter() == 'r'){
         // Start recording
-        isRecording = true;
-        recordingLabel->setVisible(isRecording);
-        repaint();
-
-        recordingBuffer.clear();
-        recordingIdx = 0;
+        recordButton->triggerClick();
     }
     if(key.getTextCharacter() == 'p'){
         // Start recorded playback
@@ -512,84 +566,73 @@ bool MainComponent::keyPressed(const KeyPress &key, Component *originatingCompon
         primeTrajectory();
     }
     if(key.getTextCharacter() == '.'){
-        // Pause/unpause agent
-        isAgentPaused = !isAgentPaused;
-        OSCMessage* message = new OSCMessage("/pause", isAgentPaused);
-        sender.send(*message);
-
-        isGeneratedLooping = false;
-
-        // Start playback
-        if(!isAgentPaused) {
-            generatedIdx = 0;
-        } else {
-            generatedIdx = -1;
-        }
-
-        isAgentRunningLabel->setVisible(!isAgentPaused);
-        repaint();
+        runAgentButton->triggerClick();
     }
     if(key.getTextCharacter() == 'l'){
         // Loop generated
         isGeneratedLooping = !isGeneratedLooping;
         if(isGeneratedLooping){
             generatedIdx = 0;
+            playButton->setButtonText("Looping...");
         } else {
             generatedIdx = -1;
+            playButton->setButtonText("Play");
         }
     }
-    if(key.getKeyCode() == juce::KeyPress::backspaceKey){
-        OSCMessage* message = new OSCMessage("/restart_script");
-        sender.send(*message);
-
-        // Stop playing
-        generatedIdx = -1;
+    if(key.getKeyCode() == KeyPress::backspaceKey){
+        resetButton->triggerClick();
     }
     if(key.getTextCharacter() == 'h'){
         isManagerVisible = !isManagerVisible;
         audioSetupComp.setVisible(isManagerVisible);
         diagnosticsBox.setVisible(isManagerVisible);
-        repaint();
     }
+    repaint();
     return true;
 }
 
 void MainComponent::showConnectionErrorMessage (const juce::String& messageText)
 {
-    juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::WarningIcon,
-                                            "Connection error",
-                                            messageText,
-                                            "OK");
+    juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::WarningIcon,"Connection error", messageText,"OK");
 }
 
 void MainComponent::handleAsyncUpdate(){
-    recordingLabel->setVisible(isRecording);
+    if(isRecording){
+        recordButton->setButtonText("Recording...");
+    } else {
+        recordButton->setButtonText("Record");
+    }
+    if(generatedIdx == -1 && !isGeneratedLooping){
+        playButton->setButtonText("Play");
+    } else if(isGeneratedLooping){
+        playButton->setButtonText("Looping...");
+    } else {
+        playButton->setButtonText("Stop");
+    }
     repaint();
 
-    // Generate trajectory from audio
-    auto gen = traverser->generateTrajectoryFromAudio(recordingBuffer);
-    // Audio
-    generated = get<0>(gen);
-    // Grain data
-    generatedGrains = get<1>(gen);
-
-    // Send to RL
-    primeTrajectory();
+    if(shouldPrimeTrajectory){
+        shouldPrimeTrajectory = false;
+        // Generate trajectory from audio
+        traverser->generateTrajectoryFromAudio(*recordingBuffer);
+        // Send to RL
+        primeTrajectory();
+    }
 }
 
 void MainComponent::primeTrajectory() {
     // Create grains from recording and send to RL agent
-    OSCMessage* message = new OSCMessage("/prime_trajectory");
+    OSCMessage message = OSCMessage("/prime_trajectory");
 
     // Convert recording buffer to grains
-    vector<float> data = traverser->convertAudioBufferToRLFormat(recordingBuffer);
+    vector<float> data = traverser->convertAudioBufferToRLFormat(*recordingBuffer);
 
     // Each attribute of each grain is one message argument
     for(auto& entry : data){
-        message->addFloat32(entry);
+        message.addFloat32(entry);
     }
 
-    sender.send(*message);
+    sender.send(message);
 }
 
 void MainComponent::setupDiagnosticsAndDeviceManager(){

@@ -10,29 +10,14 @@
 
 #include "SamplePanel.h"
 
-Identifier SamplePanel::currentFilePathID("currentFilePath");
-
 //==============================================================================
 SamplePanel::SamplePanel(Analyser& analyser, Traverser& traverser) : analyser(analyser), traverser(traverser)
 {
     // Initialise loaded state
     fileLoadedState = notLoaded;
 
-    filenameComponent.reset(
-        new FilenameComponent("file", {}, false, true, false, "*", {}, "Browse for sample")
-//        new FilenameComponent("file", {}, false, false, false, "*.wav", {}, "Browse for sample")
-    );
-
     // Set default location
     File* defaultLocation = new File("/Users/max/Music/Ableton/Samples");
-    filenameComponent->setDefaultBrowseTarget(*defaultLocation);
-
-    // Add file picker component to UI
-    addAndMakeVisible(filenameComponent.get());
-    filenameComponent->addListener(this);
-
-    // Hook up currentFilePath to state management
-    currentFilePath.addListener(this);
 
     // Preload sample for convenience
 	// Note: If this path does not exist the plugin simply defaults to no sample
@@ -52,7 +37,7 @@ SamplePanel::SamplePanel(Analyser& analyser, Traverser& traverser) : analyser(an
     dirChooser = make_unique<FileChooser>("Select directories", *defaultLocation, "*.wav", true);
 
     // Set component size
-    setSize(1024, 200);
+    setSize(1024, 100);
 }
 
 SamplePanel::~SamplePanel()
@@ -109,7 +94,6 @@ void SamplePanel::paintIfFileLoaded(Graphics& g)
 
 void SamplePanel::resized()
 {
-    filenameComponent->setBounds(0, 0, 1024, 30);
 }
 
 void SamplePanel::loadFile(const File& file) {
@@ -137,8 +121,6 @@ void SamplePanel::loadFile(const File& file) {
         fileLoadedState = loaded;
     }
     else {
-        // Reset file component
-        filenameComponent->setCurrentFile({}, false, dontSendNotification);
         // Show info text
         fileLoadedState = rejected;
     }
@@ -146,7 +128,6 @@ void SamplePanel::loadFile(const File& file) {
 }
 
 void SamplePanel::loadSingleFile(const File& file){
-    filenameComponent->setCurrentFile(file, false, dontSendNotification);
     ScopedPointer<AudioFormatReader> reader = formatManager.createReaderFor(file);
     // If file is valid load it and send callback to processor
     if (reader != 0)
@@ -171,32 +152,6 @@ void SamplePanel::loadSingleFile(const File& file){
         analyser.analyseAndSaveToDB(*sampleBuffer, file.getFileName().toStdString(),
                                     file.getFullPathName().toStdString());
     }
-}
-
-// ----------------- Listeners ------------------------
-void SamplePanel::valueChanged(Value& val)
-{
-    if (val.toString() != "") {
-    	// Create JUCE file
-        const auto currentFile = new File(val.toString());
-        // Load file into sample buffer
-    	loadFile(*currentFile);
-    }
-}
-
-void SamplePanel::filenameComponentChanged(FilenameComponent* fileComponentThatHasChanged) 
-{
-	// Update the currentFilePath value if the file was changed
-    if (fileComponentThatHasChanged == filenameComponent.get()) {
-        currentFilePath.setValue(filenameComponent->getCurrentFile().getFullPathName());
-    }
-}
-
-// ----------------- Getters and setters ------------------------
-
-void SamplePanel::setCurrentFilePath(String& path)
-{
-    currentFilePath.setValue(path);
 }
 
 void SamplePanel::mouseDown (const MouseEvent& event) {

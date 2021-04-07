@@ -4,8 +4,8 @@
 
 #include "Traverser.h"
 
-Traverser::Traverser(DBConnector& connector, Analyser& analyser)
-    : dbConnector(connector), analyser(analyser){
+Traverser::Traverser(DBConnector& connector, Analyser& analyser, AudioBuffer<float>& generatedBuffer, vector<Grain>& target)
+    : dbConnector(connector), analyser(analyser), generatedBuffer(generatedBuffer), target(target){
     formatManager.registerBasicFormats();
 
     calculateFeatureStatistics();
@@ -14,11 +14,10 @@ Traverser::Traverser(DBConnector& connector, Analyser& analyser)
     window = make_unique<dsp::WindowingFunction<float>>(GRAIN_LENGTH, dsp::WindowingFunction<float>::WindowingMethod::hann);
 }
 
-tuple<AudioBuffer<float>, vector<Grain>> Traverser::generateTrajectoryFromParams(vector<float> params){
+void Traverser::generateTrajectoryFromParams(vector<float> params){
     if(!init()){
-        return make_tuple(AudioBuffer<float>(0, 0), vector<Grain>());
+        return;
     }
-    source.clear();
     // Create source from RL parameters
     // Define length of trajectory
     for(int i = 0; i < params.size(); i += NUM_FEATURES){
@@ -32,17 +31,23 @@ tuple<AudioBuffer<float>, vector<Grain>> Traverser::generateTrajectoryFromParams
         Grain* grain = new Grain(loudness, sc, sf, pitch);
         source.emplace_back(*grain);
     }
+    generateTargetGrainsAndCreateBuffer();
+}
 
+void Traverser::generateTrajectoryFromAudio(AudioBuffer<float>& input) {
+    if(!init()){
+        return;
+    }
+    // Create source from input audio
+    source = analyser.audioBufferToGrains(input);
     return generateTargetGrainsAndCreateBuffer();
 }
 
-tuple<AudioBuffer<float>, vector<Grain>> Traverser::generateTrajectoryFromAudio(AudioBuffer<float>& input) {
+void Traverser::generateRandomTrajectory() {
     if(!init()){
-        return make_tuple(AudioBuffer<float>(0, 0), vector<Grain>());
+        return;
     }
-
-    // Create source from input audio
-    source = analyser.audioBufferToGrains(input);
+    source = dbConnector.queryRandomTrajectory();
     return generateTargetGrainsAndCreateBuffer();
 }
 
@@ -65,9 +70,6 @@ Grain Traverser::findBestGrain(Grain& src, vector<Grain>& grains) const {
         distance = distLoudness + distSC + distSF + distPitch;
         distances.emplace_back(distance);
     }
-    if(distances.size() == 0){
-        fprintf(stdout, "No grains found...");
-    }
     // Find index of min distance
     int minElementIdx = min_element(distances.begin(), distances.end()) - distances.begin();
 
@@ -76,17 +78,7 @@ Grain Traverser::findBestGrain(Grain& src, vector<Grain>& grains) const {
     return bestMatch;
 }
 
-tuple<AudioBuffer<float>, vector<Grain>> Traverser::generateRandomTrajectory(int lengthInGrains) {
-    if(!init()){
-        return make_tuple(AudioBuffer<float>(0, 0), vector<Grain>());
-    }
-
-    source = dbConnector.queryRandomTrajectory();
-
-    return generateTargetGrainsAndCreateBuffer();
-}
-
-void Traverser::generateTargetGrains(float margin, int tries){
+void Traverser::generateTargetGrains(float margin){
     target.clear();
 
     for(Grain& sourceGrain : source){
@@ -97,26 +89,18 @@ void Traverser::generateTargetGrains(float margin, int tries){
             // Calculate best grain based on weighted euclidean distance
             bestMatch = findBestGrain(sourceGrain, found);
         }
-//        else if(found.empty() && tries < 5) {
-//            float newMargin = margin + 500.0f;
-//            fprintf(stdout, "No target grain found... Trying with margin %f \n", newMargin);
-//            target.clear();
-//            generateTargetGrains(newMargin, tries + 1);
-//            return;
-//        }
 
         target.emplace_back(bestMatch);
     }
 }
-tuple<AudioBuffer<float>, vector<Grain>> Traverser::generateTargetGrainsAndCreateBuffer(){
+void Traverser::generateTargetGrainsAndCreateBuffer(){
     // Find target grains from database
     float margin = 100;
 
-    generateTargetGrains(margin, 0);
+    generateTargetGrains(margin);
 
     // Get sound data
     int channels = 2;
-    AudioBuffer<float>* buffer = new AudioBuffer<float>(channels, GRAINS_IN_TRAJECTORY * GRAIN_LENGTH);
     int bufferIdx = 0;
 
     for(Grain& grain : target){
@@ -124,15 +108,13 @@ tuple<AudioBuffer<float>, vector<Grain>> Traverser::generateTargetGrainsAndCreat
         if(!grain.getPath().empty()){
             // Load audio file if not yet in memory
             ScopedPointer<AudioFormatReader> reader = formatManager.createReaderFor(File(grain.getPath()));
-            reader->read(buffer, bufferIdx, GRAIN_LENGTH, grain.getIdx(), true, true);
+            reader->read(&generatedBuffer, bufferIdx, GRAIN_LENGTH, grain.getIdx(), true, true);
             // Apply window
-            window->multiplyWithWindowingTable(buffer->getWritePointer(0, bufferIdx), GRAIN_LENGTH);
-            window->multiplyWithWindowingTable(buffer->getWritePointer(1, bufferIdx), GRAIN_LENGTH);
+            window->multiplyWithWindowingTable(generatedBuffer.getWritePointer(0, bufferIdx), GRAIN_LENGTH);
+            window->multiplyWithWindowingTable(generatedBuffer.getWritePointer(1, bufferIdx), GRAIN_LENGTH);
             bufferIdx += GRAIN_LENGTH;
         }
     }
-
-    return make_tuple(*buffer, target);
 }
 
 void Traverser::calculateFeatureStatistics() {
@@ -177,7 +159,7 @@ bool Traverser::init() {
     if(isMinMaxInitialised()){
         return true;
     } else {
-        fprintf(stderr, "Min-max not initialised. AudioBuffer from trajectory will be empty.");
+        fprintf(stdout, "Min-max not initialised. AudioBuffer from trajectory will be empty.");
     }
 
     return false;

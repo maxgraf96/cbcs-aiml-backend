@@ -62,6 +62,8 @@ private:
     unique_ptr<Algorithm> aRMS;
 
     bool computeFeatures();
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (Analyser)
 };
 
 

@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <vector>
 #include <set>
+#include <juce_audio_utils/juce_audio_utils.h>
 #include "sqlite3.h"
 #include "Grain.h"
 #include "Constants.h"
@@ -32,7 +33,13 @@ private:
     sqlite3 *db;
     sqlite3 *dbDisk;
     string DB_PATH = "/Users/max/Desktop/test.db";
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (DBConnector)
 };
 
+struct closestGrainObject {
+    int numFound = 0;
+    vector<Grain> found;
+};
 
 #endif //DMLAP_BACKEND_DBCONNECTOR_H

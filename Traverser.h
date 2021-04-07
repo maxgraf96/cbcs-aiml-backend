@@ -22,11 +22,11 @@ using namespace juce;
 
 class Traverser {
 public:
-    Traverser(DBConnector& connector, Analyser& analyser);
+    Traverser(DBConnector& connector, Analyser& analyser, AudioBuffer<float>& generatedBuffer, vector<Grain>& target);
 
-    tuple<AudioBuffer<float>, vector<Grain>> generateRandomTrajectory(int lengthInGrains);
-    tuple<AudioBuffer<float>, vector<Grain>> generateTrajectoryFromParams(vector<float> params);
-    tuple<AudioBuffer<float>, vector<Grain>> generateTrajectoryFromAudio(AudioBuffer<float>& buffer);
+    void generateRandomTrajectory();
+    void generateTrajectoryFromParams(vector<float> params);
+    void generateTrajectoryFromAudio(AudioBuffer<float>& buffer);
 
     // For sending grains to RL agent
     vector<float> convertAudioBufferToRLFormat(AudioBuffer<float>& buffer);
@@ -38,16 +38,17 @@ public:
 private:
     DBConnector& dbConnector;
     Analyser& analyser;
+    AudioBuffer<float>& generatedBuffer;
     vector<Grain> source;
-    vector<Grain> target;
+    vector<Grain>& target;
     AudioFormatManager formatManager;
 
     bool init();
 
     Grain findBestGrain(Grain& src, vector<Grain>& grains) const;
     float normaliseValue(float in, float ref) const;
-    void generateTargetGrains(float margin, int tries);
-    tuple<AudioBuffer<float>, vector<Grain>> generateTargetGrainsAndCreateBuffer();
+    void generateTargetGrains(float margin);
+    void generateTargetGrainsAndCreateBuffer();
 
     float minLoudness = 0.0f;
     float maxLoudness = 0.0f;
@@ -71,6 +72,8 @@ private:
 
     // DSP stuff
     unique_ptr<dsp::WindowingFunction<float>> window;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (Traverser)
 };
 
 

@@ -6,6 +6,8 @@
 // directly. If you need to remain compatible with Projucer-generated builds, and
 // have called `juce_generate_juce_header(<thisTarget>)` in your CMakeLists.txt,
 // you could `#include <JuceHeader.h>` here instead, to make all your module headers visible.
+#include <chrono>
+#include <thread>
 #include <juce_gui_extra/juce_gui_extra.h>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_dsp/juce_dsp.h>
@@ -17,8 +19,9 @@
 #include "Traverser.h"
 #include "Constants.h"
 #include "Utility.h"
+#include "MyLookAndFeel.h"
 
-
+using namespace std::chrono;
 using namespace juce;
 using namespace std;
 using namespace essentia;
@@ -64,7 +67,7 @@ private:
     unique_ptr<Analyser> analyser;
     unique_ptr<Traverser> traverser;
 
-    AudioBuffer<float> generated;
+    unique_ptr<AudioBuffer<float>> generatedBuffer;
     vector<Grain> generatedGrains;
     atomic<int> generatedIdx;
     // Flag for checking if we're currently looping (i.e. playing with the little ball thingimajic) via the OSC interface
@@ -76,17 +79,22 @@ private:
     bool isGeneratedLooping = false;
 
     // GUI
+    MyLookAndFeel myLookAndFeel;
+    Colour recordButtonBackground = Colour::fromString("FFFF605C");
+    Colour playButtonBackground = Colour::fromString("FF00CA4E");
+    Colour feedbackButtonBackground = Colour::fromString("FF2f3640");
+    Colour black = Colour::fromRGB(0, 0, 0);
+
+    unique_ptr<TextButton> recordButton;
     unique_ptr<TextButton> playButton;
     unique_ptr<TextButton> yesButton;
     unique_ptr<TextButton> noButton;
+    unique_ptr<TextButton> superlikeButton;
+    unique_ptr<TextButton> superdislikeButton;
+    unique_ptr<TextButton> runAgentButton;
+    unique_ptr<TextButton> exploreButton;
     unique_ptr<TextButton> resetButton;
     void initialiseGUI();
-
-    unique_ptr<Label> recordingLabel;
-    unique_ptr<Label> isAgentRunningLabel;
-    // Indicate the wait time the agent needs to explore
-    unique_ptr<Label> isExploringLabel;
-
 
     // OSC for communication with python RL agent
     OSCSender sender;
@@ -98,10 +106,11 @@ private:
 
     // RL management
     bool isAgentPaused = true;
+    bool shouldPrimeTrajectory = false;
     void primeTrajectory();
 
     // Recording audio
-    AudioBuffer<float> recordingBuffer;
+    unique_ptr<AudioBuffer<float>> recordingBuffer;
     atomic<int> recordingIdx;
     bool isRecording = false;
 
@@ -113,6 +122,9 @@ private:
     void dumpDeviceInfo();
     juce::TextEditor diagnosticsBox;
     void changeListenerCallback(ChangeBroadcaster*) override;
+
+    // Thread safety
+    atomic<bool> canSetGeneratedIdx;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainComponent)
 };
