@@ -1,17 +1,7 @@
-/*
-  ==============================================================================
-
-    SamplePanel.cpp
-    Created: 15 Mar 2020 3:40:25pm
-    Author:  Music
-
-  ==============================================================================
-*/
-
-#include "SamplePanel.h"
+#include "DataLoaderPanel.h"
 
 //==============================================================================
-SamplePanel::SamplePanel(Analyser& analyser, Traverser& traverser) : analyser(analyser), traverser(traverser)
+DataLoaderPanel::DataLoaderPanel(Analyser& analyser, Traverser& traverser) : analyser(analyser), traverser(traverser)
 {
     // Initialise loaded state
     fileLoadedState = notLoaded;
@@ -19,13 +9,7 @@ SamplePanel::SamplePanel(Analyser& analyser, Traverser& traverser) : analyser(an
     // Set default location
     File* defaultLocation = new File("/Users/max/Music/Ableton/Samples");
 
-    // Preload sample for convenience
-	// Note: If this path does not exist the plugin simply defaults to no sample
-    // const auto currentFile = new File("C:\\Users\\Music\\Ableton\\Mixes\\sweetrelease.wav");
-    // filenameComponent->setCurrentFile(*currentFile, false, dontSendNotification);
-    // loadFile(*currentFile);
-
-    // Prepare waveform display
+    // Prepare basic file formats (needed to read "*.wav" files)
     formatManager.registerBasicFormats();
 
     sampleBuffer = make_unique<AudioBuffer<float>>();
@@ -40,16 +24,13 @@ SamplePanel::SamplePanel(Analyser& analyser, Traverser& traverser) : analyser(an
     setSize(1024, 100);
 }
 
-SamplePanel::~SamplePanel()
+DataLoaderPanel::~DataLoaderPanel()
 {
 }
 
-void SamplePanel::paint (Graphics& g)
+void DataLoaderPanel::paint (Graphics& g)
 {
     g.fillAll (backgroundColour);
-
-    //g.setColour (Colours::grey);
-    //g.drawRect (getLocalBounds(), 1);
 
     g.setColour (Colours::white);
     g.setFont(24.0f);
@@ -57,10 +38,10 @@ void SamplePanel::paint (Graphics& g)
 	// Text to display on sample panel depends on whether a file is loaded
     String fileLoadedText = "";
     if (fileLoadedState == notLoaded) {
-        fileLoadedText = "No sample loaded";
+        fileLoadedText = "Database not loaded. Click to load...";
     }
     else if (fileLoadedState == loading) {
-        fileLoadedText = "Drop sample here";
+        fileLoadedText = "";
     }
     else if (fileLoadedState == rejected) {
         fileLoadedText = "Only '.wav' files are supported!";
@@ -79,24 +60,24 @@ void SamplePanel::paint (Graphics& g)
         paintIfFileLoaded(g);
 }
 
-void SamplePanel::paintIfNoFileLoaded(Graphics& g)
+void DataLoaderPanel::paintIfNoFileLoaded(Graphics& g)
 {
     g.setColour(backgroundColour);
     g.setColour(Colours::white);
 	g.setFont(24.0f);
 }
 
-void SamplePanel::paintIfFileLoaded(Graphics& g)
+void DataLoaderPanel::paintIfFileLoaded(Graphics& g)
 {
     // Draw background
     g.setColour(backgroundColour);
 }
 
-void SamplePanel::resized()
+void DataLoaderPanel::resized()
 {
 }
 
-void SamplePanel::loadFile(const File& file) {
+void DataLoaderPanel::loadFile(const File& file) {
 	// Get file extension
 	const auto fileExtension = file.getFileExtension();
     // Only accept wavs
@@ -127,10 +108,10 @@ void SamplePanel::loadFile(const File& file) {
     repaint();
 }
 
-void SamplePanel::loadSingleFile(const File& file){
+void DataLoaderPanel::loadSingleFile(const File& file){
     ScopedPointer<AudioFormatReader> reader = formatManager.createReaderFor(file);
     // If file is valid load it and send callback to processor
-    if (reader != 0)
+    if (reader != nullptr)
     {
         // Fix channels to 2 (stereo)
         // Read into sample buffer
@@ -154,7 +135,7 @@ void SamplePanel::loadSingleFile(const File& file){
     }
 }
 
-void SamplePanel::mouseDown (const MouseEvent& event) {
+void DataLoaderPanel::mouseDown (const MouseEvent& event) {
     if (dirChooser->browseForMultipleFilesOrDirectories())
     {
         Array<File> files = dirChooser->getResults();

@@ -22,16 +22,15 @@ void Analyser::analyseAndSaveToDB(AudioBuffer<float>& buffer, const string& file
             eAudioBuffer.push_back(reader[i]);
         }
 
-        if(computeFeatures()){
-            grains.emplace_back(Grain(filename + to_string(counter),
-                                      path,
-                                      index,
-                                      eLoudness,
-                                      eSpectralCentroid,
-                                      eSpectralFlux,
-                                      ePitch
-            ));
-        }
+        computeFeatures();
+        grains.emplace_back(Grain(filename + to_string(counter),
+                                  path,
+                                  index,
+                                  eLoudness,
+                                  eSpectralCentroid,
+                                  eSpectralFlux,
+                                  ePitch
+        ));
 
         // Update index -> start of next grain
         index += GRAIN_LENGTH;
@@ -67,29 +66,23 @@ vector<Grain> Analyser::audioBufferToGrains(AudioBuffer<float>& buffer){
     return grains;
 }
 
-bool Analyser::computeFeatures(){
+void Analyser::computeFeatures(){
     // Essentia algorithms compute routines
-//    aRMS->compute();
-    // Skip the grain if silent
-//    if(eRMS < 0.01f){
-//        return false;
-//    }
     aWindowing->compute();
     aSpectrum->compute();
     aSpectralCentroid->compute();
     aLoudness->compute();
     aSpectralFlux->compute();
     aPitchYINFFT->compute();
-    return true;
 }
 
-void Analyser::initialise(double sr, int samplesPerBlockExpected) {
+void Analyser::initialise(double sr) {
     this->sampleRate = sr;
-    this->samplesPerBlock = samplesPerBlockExpected;
 
     // Create algorithms
     standard::AlgorithmFactory& factory = standard::AlgorithmFactory::instance();
 
+    // Initialise essentia algorithms
     aWindowing.reset(factory.create("Windowing", "type", "blackmanharris62"));
     aSpectrum.reset(factory.create("Spectrum"));
     aMFCC.reset(factory.create("MFCC"));

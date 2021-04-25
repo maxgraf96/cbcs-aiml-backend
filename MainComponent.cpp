@@ -12,8 +12,7 @@ MainComponent::MainComponent()
  false, // treat channels as stereo pairs
  false) // hide advanced options
 {
-    // Make sure you set the size of the component after
-    // you add any child components.
+    // Main window size
     setSize (1024, 600);
 
     // Disable input
@@ -71,10 +70,14 @@ MainComponent::MainComponent()
 
 MainComponent::~MainComponent()
 {
+    // Shutdown essentia
     essentia::shutdown();
+
+    // Stop OSC
     sender.disconnect();
 
     deviceManager.removeChangeListener (this);
+
     // This shuts down the audio device and clears the audio source.
     shutdownAudio();
 }
@@ -96,6 +99,7 @@ void MainComponent::prepareToPlay (int samplesPerBlockExpected, double sampleRat
         essentia::init();
     }
 
+    // Create audio buffer for generated graina trajectory
     if (generatedBuffer == nullptr){
         generatedBuffer = make_unique<AudioBuffer<float>>(2, GRAIN_LENGTH * GRAINS_IN_TRAJECTORY);
         generatedBuffer->clear();
@@ -104,6 +108,7 @@ void MainComponent::prepareToPlay (int samplesPerBlockExpected, double sampleRat
     recordingIdx = -1;
     canSetGeneratedIdx = true;
 
+    // Create audio buffer for recording user audio
     if(recordingBuffer == nullptr)
     {
         recordingBuffer = make_unique<AudioBuffer<float>>(2, GRAINS_IN_TRAJECTORY * GRAIN_LENGTH);
@@ -119,12 +124,12 @@ void MainComponent::prepareToPlay (int samplesPerBlockExpected, double sampleRat
         // Initialise traverser
         traverser = make_unique<Traverser>(*dbConnector, *analyser, *generatedBuffer, generatedGrains);
 
-        samplePanel = make_unique<SamplePanel>(*analyser, *traverser);
-        addAndMakeVisible(*samplePanel);
+        dataLoaderPanel = make_unique<DataLoaderPanel>(*analyser, *traverser);
+        addAndMakeVisible(*dataLoaderPanel);
 
         initialiseGUI();
     }
-    analyser->initialise(sampleRate, samplesPerBlockExpected);
+    analyser->initialise(sampleRate);
 }
 
 void MainComponent::getNextAudioBlock (const juce::AudioSourceChannelInfo& bufferToFill)
@@ -146,6 +151,7 @@ void MainComponent::getNextAudioBlock (const juce::AudioSourceChannelInfo& buffe
         return;
     }
 
+    // Recording user audio using the computer microphone
     else if(isRecording){
         // Audio input for recording
         if(recordingIdx + numSamples > recordingBuffer->getNumSamples()){
@@ -170,6 +176,7 @@ void MainComponent::getNextAudioBlock (const juce::AudioSourceChannelInfo& buffe
         return;
     }
 
+    // Normal playback of recorded user audio
     else if(!isRecording && recordingIdx > -1){
         if(recordingIdx + numSamples >= recordingBuffer->getNumSamples()){
             recordingIdx = -1;
@@ -183,6 +190,7 @@ void MainComponent::getNextAudioBlock (const juce::AudioSourceChannelInfo& buffe
         return;
     }
 
+    // Looping via the OSC MOBILE WEB interface (i.e. the one on the phone)
     else if(isLooping){
         if(genIdx >= loopingGrainEndIdx){
             generatedIdx = genIdx = loopingGrainStartIdx;
@@ -192,7 +200,10 @@ void MainComponent::getNextAudioBlock (const juce::AudioSourceChannelInfo& buffe
         bufferToFill.buffer->addFrom(1, 0, *generatedBuffer, 1, genIdx, numSamples);
         generatedIdx += numSamples;
         return;
-    } else if (generatedIdx > -1 && (!isAgentPaused || isGeneratedLooping)){
+    }
+
+    // Standard looping of the generated trajectory
+    else if (generatedIdx > -1 && (!isAgentPaused || isGeneratedLooping)){
         // Loop generated
         if(genIdx + numSamples > generatedBuffer->getNumSamples()){
             generatedIdx = genIdx = 0;
@@ -204,10 +215,12 @@ void MainComponent::getNextAudioBlock (const juce::AudioSourceChannelInfo& buffe
         return;
     }
 
+    // Nothing, output silence
     else {
         // Disable feedback
         bufferToFill.buffer->clear();
     }
+
     canSetGeneratedIdx = true;
 }
 
@@ -244,7 +257,7 @@ void MainComponent::resized()
 
 void MainComponent::initialiseGUI(){
     // Add buttons
-    int marginTop = samplePanel->getHeight();
+    int marginTop = dataLoaderPanel->getHeight();
     int buttonHeight = 80;
 
     // Record button
@@ -454,45 +467,6 @@ void MainComponent::oscMessageReceived (const juce::OSCMessage& message){
             generatedIdx = -1;
         }
     }
-    if(address == "/osc_from_js_clear_recording_buffer"){
-        recordingBuffer->clear();
-        oscCounter = 0;
-    }
-    int messageSize = 100;
-    if(address == "/osc_from_js_left_channel_data"){
-        oscCounter++;
-        int bufferIdx = message[0].getInt32();
-        recordingBuffer->clear(0, bufferIdx, messageSize);
-        for(int i = 1; i < message.size(); i++){
-            recordingBuffer->addSample(0, bufferIdx++, message[i].getFloat32());
-        }
-    }
-    if(address == "/osc_from_js_right_channel_data"){
-        oscCounter++;
-        int bufferIdx = message[0].getInt32();
-        recordingBuffer->clear(1, bufferIdx, messageSize);
-        for(int i = 1; i < message.size(); i++){
-            recordingBuffer->addSample(1, bufferIdx++, message[i].getFloat32());
-        }
-    }
-    if(address == "/osc_from_js_audio_transmission_done"){
-        fprintf(stdout, "OSC done, floats received: %i / in percent: %f", oscCounter * messageSize, (static_cast<float>(oscCounter * messageSize) / (2.0f * 74496.0f)));
-        fprintf(stdout, "\n");
-        // Change button text back
-
-        repaint();
-
-        // Normalise buffer
-//        float newMaximum = 0.99f;
-//        int numSamples = recordingBuffer.getNumSamples() - 1;
-//        float maxL = findMaximum(recordingBuffer.getReadPointer(0, numSamples), numSamples);
-//        float normaliseFactor = newMaximum / maxL;
-//        recordingBuffer.applyGain(normaliseFactor);
-
-        // Generate new grain trajectory from recorded audio
-        traverser->generateTrajectoryFromAudio(*recordingBuffer);
-        primeTrajectory();
-    }
     if(address == "/osc_from_js_play"){
         playButton->triggerClick();
     }
@@ -529,6 +503,44 @@ void MainComponent::oscMessageReceived (const juce::OSCMessage& message){
         exploreButton->setButtonText("Explore");
         repaint();
     }
+
+    // -------------------------------------------------------------------------------------------------------------------
+    // IMPORTANT NOTE: THE FOLLOWING 4 ADDRESSES ARE CURRENTLY NOT USED since phone audio data is pretty bad
+    // The original intent of those was to send recorded audio data FROM THE PHONE to the JUCE application via osc.
+    // Turns out that the resulting audio contains loads of noise, hence not particularly useful for priming the agent
+    if(address == "/osc_from_js_clear_recording_buffer"){
+        recordingBuffer->clear();
+        oscCounter = 0;
+    }
+    int messageSize = 100;
+    if(address == "/osc_from_js_left_channel_data"){
+        oscCounter++;
+        int bufferIdx = message[0].getInt32();
+        recordingBuffer->clear(0, bufferIdx, messageSize);
+        for(int i = 1; i < message.size(); i++){
+            recordingBuffer->addSample(0, bufferIdx++, message[i].getFloat32());
+        }
+    }
+    if(address == "/osc_from_js_right_channel_data"){
+        oscCounter++;
+        int bufferIdx = message[0].getInt32();
+        recordingBuffer->clear(1, bufferIdx, messageSize);
+        for(int i = 1; i < message.size(); i++){
+            recordingBuffer->addSample(1, bufferIdx++, message[i].getFloat32());
+        }
+    }
+    if(address == "/osc_from_js_audio_transmission_done"){
+        fprintf(stdout, "OSC done, floats received: %i / in percent: %f", oscCounter * messageSize, (static_cast<float>(oscCounter * messageSize) / (2.0f * 74496.0f)));
+        fprintf(stdout, "\n");
+        // Change button text back
+
+        repaint();
+
+        // Generate new grain trajectory from recorded audio
+        traverser->generateTrajectoryFromAudio(*recordingBuffer);
+        primeTrajectory();
+    }
+    // -------------------------------------------------------------------------------------------------------------------
 }
 
 bool MainComponent::keyPressed(const KeyPress &key, Component *originatingComponent) {

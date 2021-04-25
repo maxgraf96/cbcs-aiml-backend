@@ -7,6 +7,9 @@
 #include <juce_gui_extra/juce_gui_extra.h>
 using namespace juce;
 
+/**
+ * Custom GUI look and feel for the JUCE application
+ */
 class MyLookAndFeel : public LookAndFeel_V4 {
     public:
         void drawButtonBackground(

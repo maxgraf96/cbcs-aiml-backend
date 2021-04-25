@@ -1,14 +1,9 @@
-/*
-  ==============================================================================
-
-    This file contains the basic startup code for a JUCE application.
-
-  ==============================================================================
-*/
-
 #include "MainComponent.h"
 
-//==============================================================================
+/**
+ * Main JUCE application file. Handles the most general things like application name, version etc...
+ * The "real" main application code is found in "MainComponent.h".
+ */
 class DMLAP_BackendApplication  : public juce::JUCEApplication
 {
 public:

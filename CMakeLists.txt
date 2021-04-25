@@ -61,7 +61,7 @@ target_sources(DMLAP_Backend
     PRIVATE
         Main.cpp
         MainComponent.cpp
-        SamplePanel.cpp
+        DataLoaderPanel.cpp
         Analyser.cpp
         Grain.cpp
         Traverser.cpp

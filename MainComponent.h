@@ -2,10 +2,6 @@
 #ifndef DMLAP_BACKEND_MAIN_H
 #define DMLAP_BACKEND_MAIN_H
 
-// CMake builds don't use an AppConfig.h, so it's safe to include juce module headers
-// directly. If you need to remain compatible with Projucer-generated builds, and
-// have called `juce_generate_juce_header(<thisTarget>)` in your CMakeLists.txt,
-// you could `#include <JuceHeader.h>` here instead, to make all your module headers visible.
 #include <chrono>
 #include <thread>
 #include <juce_gui_extra/juce_gui_extra.h>
@@ -13,7 +9,7 @@
 #include <juce_dsp/juce_dsp.h>
 #include <juce_osc/juce_osc.h>
 #include "external_libraries/essentia/include/algorithmfactory.h"
-#include "SamplePanel.h"
+#include "DataLoaderPanel.h"
 #include "DBConnector.h"
 #include "Analyser.h"
 #include "Traverser.h"
@@ -29,8 +25,7 @@ using namespace essentia::standard;
 
 //==============================================================================
 /*
-    This component lives inside our window, and this is where you should put all
-    your controls and content.
+    The main component of the JUCE application.
 */
 class MainComponent  :
         public juce::AudioAppComponent,
@@ -47,44 +42,87 @@ public:
     ~MainComponent() override;
 
     //==============================================================================
+    /**
+     * This is the main "initialise" method of the MainComponent. It is called every time the audio context changes
+     * i.e. the audio device changes, switching to headphones, etc. When it is called it initialises all the sub-components
+     * (Analyser, Traverser, DBConnector)
+     * @param samplesPerBlockExpected Samples per audio block of the new context
+     * @param sampleRate Audio sample rate of the new context
+     */
     void prepareToPlay (int samplesPerBlockExpected, double sampleRate) override;
+
+    /**
+     * This is the main audio processing method. All audio recording and playback is handled here
+     * @param bufferToFill The buffer to read audio data from (in case of recording) or to write audio data to (in case of playback)
+     */
     void getNextAudioBlock (const juce::AudioSourceChannelInfo& bufferToFill) override;
+
     void releaseResources() override;
 
     //==============================================================================
+    /**
+     * Paints the GUI
+     * @param g Graphics context
+     */
     void paint (juce::Graphics& g) override;
     void resized() override;
 
+    /**
+     * Callback for button clicks
+     * @param button
+     */
     void buttonClicked (juce::Button* button) override;
+
+    /**
+     * Callback for key presses
+     * @param key
+     * @param originatingComponent
+     * @return
+     */
     bool keyPressed(const KeyPress &key, Component *originatingComponent) override;
+
+    /**
+     * Callback for handling asynchronous UI updates
+     */
     void handleAsyncUpdate() override;
 
 private:
     //==============================================================================
-    // Your private member variables go here...
+    // DB connection
     unique_ptr<DBConnector> dbConnector;
-    unique_ptr<SamplePanel> samplePanel;
+    // The data loader panel component
+    unique_ptr<DataLoaderPanel> dataLoaderPanel;
+    // The analyser (for calculating audio features)
     unique_ptr<Analyser> analyser;
+    // The traverser (for creating trajectories through the grain sound space)
     unique_ptr<Traverser> traverser;
 
+    // Audio data of the generated trajectory grains
     unique_ptr<AudioBuffer<float>> generatedBuffer;
+    // Grain data of the generated trajectory grains
     vector<Grain> generatedGrains;
+    // Current index of the generatedBuffer audio buffer
     atomic<int> generatedIdx;
-    // Flag for checking if we're currently looping (i.e. playing with the little ball thingimajic) via the OSC interface
+
+    // Flag for checking if we're currently looping (i.e. playing with the little ball thingimajic) via the MOBILE OSC interface
     bool isLooping = false;
     int loopingGrainStartIdx = -1;
     int loopingGrainEndIdx = -1;
+
     // Flag for checking whether generated buffer is currently looping
-    // This is the mainly for listening to created loops
+    // This is mainly for listening to created loops
     bool isGeneratedLooping = false;
 
     // GUI
+    // Custom look and feel of JUCE GUI
     MyLookAndFeel myLookAndFeel;
+    // Colours
     Colour recordButtonBackground = Colour::fromString("FFFF605C");
     Colour playButtonBackground = Colour::fromString("FF00CA4E");
     Colour feedbackButtonBackground = Colour::fromString("FF2f3640");
     Colour black = Colour::fromRGB(0, 0, 0);
 
+    // Buttons
     unique_ptr<TextButton> recordButton;
     unique_ptr<TextButton> playButton;
     unique_ptr<TextButton> yesButton;
@@ -94,6 +132,10 @@ private:
     unique_ptr<TextButton> runAgentButton;
     unique_ptr<TextButton> exploreButton;
     unique_ptr<TextButton> resetButton;
+
+    /**
+     * Initialise all GUI elements
+     */
     void initialiseGUI();
 
     // OSC for communication with python RL agent
@@ -107,6 +149,9 @@ private:
     // RL management
     bool isAgentPaused = true;
     bool shouldPrimeTrajectory = false;
+    /**
+     * Prime RL agent with current trajectory
+     */
     void primeTrajectory();
 
     // Recording audio

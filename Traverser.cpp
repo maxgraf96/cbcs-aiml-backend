@@ -183,6 +183,6 @@ vector<float> Traverser::convertAudioBufferToRLFormat(AudioBuffer<float> &buffer
     return data;
 }
 
-float Traverser::normaliseValue(float in, float ref) const {
+float Traverser::normaliseValue(float in, float ref) {
     return in / ref;
 }
